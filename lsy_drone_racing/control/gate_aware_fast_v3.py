@@ -131,11 +131,11 @@ def _build_ocp(
     # Command (input) bounds remain tighter at ±0.80 rad since they directly
     # drive the attitude controller; the drone's actual roll can overshoot
     # commanded via body dynamics under large angular rates.
-    ocp.constraints.lbx = np.array([-1.20, -1.20, -0.5])
-    ocp.constraints.ubx = np.array([1.20, 1.20, 0.5])
+    ocp.constraints.lbx = np.array([-1.20, -1.20, -1.5])
+    ocp.constraints.ubx = np.array([1.20, 1.20, 1.5])
     ocp.constraints.idxbx = np.array([3, 4, 5])
-    ocp.constraints.lbu = np.array([-0.80, -0.80, -0.5, parameters["thrust_min"] * 4])
-    ocp.constraints.ubu = np.array([0.80, 0.80, 0.5, parameters["thrust_max"] * 4])
+    ocp.constraints.lbu = np.array([-0.80, -0.80, -1.0, parameters["thrust_min"] * 4])
+    ocp.constraints.ubu = np.array([0.80, 0.80, 1.0, parameters["thrust_max"] * 4])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3])
     ocp.constraints.x0 = np.zeros((nx,))
 
