@@ -33,12 +33,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline, PchipInterpolator
 from scipy.spatial.transform import Rotation as R
 
-from lsy_drone_racing.control._planner import (
-    Plan,
-    PlannerConfig,
-    _insert_obstacle_midpoints,
-    _nudge_lateral,
-)
+from lsy_drone_racing.control._planner import Plan, _insert_obstacle_midpoints, _nudge_lateral
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -46,12 +41,7 @@ if TYPE_CHECKING:
 
 # Nominal level2 gate poses (xyz + yaw) — used only to compute warp deltas.
 NOMINAL_GATES_POS = np.array(
-    [
-        [0.5, 0.25, 0.7],
-        [1.05, 0.75, 1.2],
-        [-1.0, -0.25, 0.7],
-        [0.0, -0.75, 1.2],
-    ]
+    [[0.5, 0.25, 0.7], [1.05, 0.75, 1.2], [-1.0, -0.25, 0.7], [0.0, -0.75, 1.2]]
 )
 NOMINAL_GATES_YAW = np.array([-0.78, 2.35, 3.14, 0.0])
 
@@ -71,49 +61,72 @@ NOMINAL_GATES_YAW = np.array([-0.78, 2.35, 3.14, 0.0])
 #     so cubic-spline curvature stays low enough for MPC to track at ~2 m/s.
 LEVEL2_WAYPOINTS = np.array(
     [
-        [-1.50, 0.75, 0.01],    # 0   start
-        [-1.48, 0.74, 0.08],    # 1   micro-takeoff (gentle z-ramp prevents cubic undershoot)
-        [-1.42, 0.72, 0.22],    # 2   climb
-        [-1.25, 0.68, 0.40],    # 3   climb + east
-        [-0.95, 0.62, 0.55],    # 4   continue east-south
-        [-0.55, 0.55, 0.65],    # 5   approaching g0 altitude
-        [-0.15, 0.52, 0.70],    # 6   pre-approach
-        [0.15, 0.55, 0.70],     # 7   g0 approach
-        [0.50, 0.25, 0.70],     # 8   g0 center
-        [0.72, 0.03, 0.75],     # 9   g0 exit + slight climb
-        [1.15, -0.05, 0.95],    # 10  swing EAST of obstacle 1
-        [1.40, 0.20, 1.12],     # 11  climb to gate 1 altitude
-        [1.40, 0.40, 1.20],     # 12  g1 approach
-        [1.05, 0.75, 1.20],     # 13  g1 center
-        [0.84, 0.96, 1.20],     # 14  g1 exit
-        [0.55, 0.70, 1.20],     # 15  head W at gate-1 altitude
-        [0.05, 0.45, 1.20],     # 16  continue W
-        [-0.40, 0.20, 1.05],    # 17  descend SW
-        [-0.75, -0.10, 0.85],   # 18  continue SW toward g2
-        [-0.55, -0.25, 0.70],   # 19  g2 approach
-        [-1.00, -0.25, 0.70],   # 20  g2 center
-        [-1.18, -0.30, 0.90],   # 21  g2 exit + start climb
-        [-0.80, -0.35, 1.05],   # 22  begin NORTH arc around obstacle 3
-        [-0.40, -0.35, 1.18],   # 23  apex north of obstacle 3
-        [-0.30, -0.55, 1.20],   # 24  heading SE, past obstacle
-        [-0.10, -0.70, 1.20],   # 25  g3 approach
-        [0.00, -0.75, 1.20],    # 26  g3 center
-        [0.30, -0.75, 1.20],    # 27  g3 exit
-        [0.55, -0.75, 1.20],    # 28  stop
+        [-1.50, 0.75, 0.01],  # 0   start
+        [-1.48, 0.74, 0.08],  # 1   micro-takeoff (gentle z-ramp prevents cubic undershoot)
+        [-1.42, 0.72, 0.22],  # 2   climb
+        [-1.25, 0.68, 0.40],  # 3   climb + east
+        [-0.95, 0.62, 0.55],  # 4   continue east-south
+        [-0.55, 0.55, 0.65],  # 5   approaching g0 altitude
+        [-0.15, 0.52, 0.70],  # 6   pre-approach
+        [0.15, 0.55, 0.70],  # 7   g0 approach
+        [0.50, 0.25, 0.70],  # 8   g0 center
+        [0.72, 0.03, 0.75],  # 9   g0 exit + slight climb
+        [1.15, -0.05, 0.95],  # 10  swing EAST of obstacle 1
+        [1.40, 0.20, 1.12],  # 11  climb to gate 1 altitude
+        [1.40, 0.40, 1.20],  # 12  g1 approach
+        [1.05, 0.75, 1.20],  # 13  g1 center
+        [0.84, 0.96, 1.20],  # 14  g1 exit
+        [0.55, 0.70, 1.20],  # 15  head W at gate-1 altitude
+        [0.05, 0.45, 1.20],  # 16  continue W
+        [-0.40, 0.20, 1.05],  # 17  descend SW
+        [-0.75, -0.10, 0.85],  # 18  continue SW toward g2
+        [-0.55, -0.25, 0.70],  # 19  g2 approach
+        [-1.00, -0.25, 0.70],  # 20  g2 center
+        [-1.18, -0.30, 0.90],  # 21  g2 exit + start climb
+        [-0.80, -0.35, 1.05],  # 22  begin NORTH arc around obstacle 3
+        [-0.40, -0.35, 1.18],  # 23  apex north of obstacle 3
+        [-0.30, -0.55, 1.20],  # 24  heading SE, past obstacle
+        [-0.10, -0.70, 1.20],  # 25  g3 approach
+        [0.00, -0.75, 1.20],  # 26  g3 center
+        [0.30, -0.75, 1.20],  # 27  g3 exit
+        [0.55, -0.75, 1.20],  # 28  stop
     ]
 )
 
 # Gate tags. Transitions (-1) stay in world frame; gate-tagged waypoints warp
 # with the observed position/yaw of their gate.
 WAYPOINT_GATE_TAG = np.array(
-    [-1, -1, -1, -1, -1, -1, -1,
-      0,  0,  0,
-     -1, -1,
-      1,  1,  1,
-     -1, -1, -1, -1,
-      2,  2,  2,
-     -1, -1,
-      3,  3,  3,  3,  3]
+    [
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        -1,
+        0,
+        0,
+        0,
+        -1,
+        -1,
+        1,
+        1,
+        1,
+        -1,
+        -1,
+        -1,
+        -1,
+        2,
+        2,
+        2,
+        -1,
+        -1,
+        3,
+        3,
+        3,
+        3,
+        3,
+    ]
 )
 
 # First segment's timing override — gentle takeoff from standstill.
@@ -266,7 +279,6 @@ def build_racing_line_plan(
     # (randomization can push obstacles into the nominal line). Preserve
     # the approach/exit direction by using each waypoint's direction-to-next
     # as the "along" axis and nudging perpendicular to it.
-    planner_cfg = PlannerConfig(r_obs=cfg.r_obs)
     if len(wps) >= 2:
         for i in range(1, len(wps) - 1):
             tangent = wps[i + 1] - wps[i - 1]
@@ -289,9 +301,7 @@ def build_racing_line_plan(
     else:
         # When we have a non-trivial start velocity (mid-flight replan), fall
         # back to CubicSpline with a clamped start BC to preserve C1 continuity.
-        spline = CubicSpline(
-            t_knots, wps, bc_type=((1, start_vel), (1, np.zeros(3)))
-        )
+        spline = CubicSpline(t_knots, wps, bc_type=((1, start_vel), (1, np.zeros(3))))
     return Plan(
         waypoints=wps,
         t_knots=t_knots,

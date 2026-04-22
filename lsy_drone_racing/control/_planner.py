@@ -111,9 +111,12 @@ def _exit_axis_obstructed(
     r_obs: float,
     max_dist: float,
 ) -> bool:
-    """True if any obstacle sits within ``r_obs`` of the gate's exit axis up to
+    """Check whether an obstacle sits along the gate's exit axis.
+
+    Returns ``True`` if any obstacle is within ``r_obs`` of the axis up to
     ``max_dist`` m past the gate — i.e. a straight clearance detour along the
-    axis would graze the obstacle and need to be routed further out."""
+    axis would graze the obstacle and need to be routed further out.
+    """
     if len(obstacles_pos) == 0:
         return False
     x2 = x_axis[:2]
@@ -122,7 +125,7 @@ def _exit_axis_obstructed(
         return False
     x_u = x2 / xn
     for o in obstacles_pos:
-        rel = (o[:2] - gp[:2])
+        rel = o[:2] - gp[:2]
         along = float(np.dot(rel, x_u))
         if along < 0.0 or along > max_dist:
             continue
@@ -138,9 +141,11 @@ def _clearance_distance(
     obstacles_pos: NDArray[np.floating],
     r_obs: float,
 ) -> float:
-    """Return the past-exit clearance distance. Short (0.35) when the exit axis
-    is obstacle-free, long (0.60) when an obstacle sits along the axis and the
-    clearance must push past it."""
+    """Return the past-exit clearance distance.
+
+    Short (0.35) when the exit axis is obstacle-free, long (0.60) when an
+    obstacle sits along the axis and the clearance must push past it.
+    """
     if _exit_axis_obstructed(gp, x_axis, obstacles_pos, r_obs + 0.08, 1.0):
         return 0.60
     return 0.35
@@ -293,11 +298,11 @@ def _approach_swing(
     d_pre: float,
     r_obs: float,
 ) -> NDArray[np.floating] | None:
-    """Return a swing waypoint that routes laterally around an obstacle blocking the
-    gate's approach corridor, or ``None`` if no obstacle sits in the corridor.
+    """Return a swing waypoint around an obstacle blocking the gate's approach corridor.
 
-    The corridor spans ``[-(d_pre + r_obs), r_obs]`` along the gate x-axis (from
-    slightly past the approach point to slightly past the gate center) with width
+    Returns ``None`` if no obstacle sits in the corridor. The corridor spans
+    ``[-(d_pre + r_obs), r_obs]`` along the gate x-axis (from slightly past the
+    approach point to slightly past the gate center) with width
     ``r_obs + 0.15`` in the gate y-axis. If blocked, the swing is placed at the
     blocker's x-position (along gate x-axis) with a lateral offset of
     ``r_obs + 0.15`` on the side away from the blocker, at gate z-height.
@@ -327,9 +332,7 @@ def _approach_swing(
     if blocker is None:
         return None
     side = -1.0 if best_lateral > 0 else 1.0
-    swing_xy = (
-        gate_pos[:2] + best_along * x_u + side * (r_obs + 0.15) * y_u
-    )
+    swing_xy = gate_pos[:2] + best_along * x_u + side * (r_obs + 0.15) * y_u
     swing = np.array([swing_xy[0], swing_xy[1], gate_pos[2]])
     return swing
 
@@ -412,9 +415,7 @@ def _nudge(
 
 
 def _insert_obstacle_midpoints(
-    waypoints: NDArray[np.floating],
-    obstacles_pos: NDArray[np.floating],
-    r_obs: float,
+    waypoints: NDArray[np.floating], obstacles_pos: NDArray[np.floating], r_obs: float
 ) -> NDArray[np.floating]:
     if len(obstacles_pos) == 0:
         return waypoints
@@ -493,7 +494,6 @@ def _build_spline(
     # clear of any gate center, letting the drone run faster on open stretches.
     if len(obstacles_pos) > 0:
         slow_radius = 0.32
-        fast_radius = 0.70  # above this min-clearance, segment is "open"
         for i in range(len(waypoints) - 1):
             a, b = waypoints[i, :2], waypoints[i + 1, :2]
             ab = b - a
@@ -520,10 +520,7 @@ def _build_spline(
         # Quintic spline with clamped vel + zero-accel BCs at both ends.
         # make_interp_spline(k=5) needs 4 extra conditions (2 at each end).
         sv = np.asarray(start_vel, dtype=np.float64)
-        bc_type = (
-            [(1, sv), (2, np.zeros(3))],
-            [(1, np.zeros(3)), (2, np.zeros(3))],
-        )
+        bc_type = ([(1, sv), (2, np.zeros(3))], [(1, np.zeros(3)), (2, np.zeros(3))])
         try:
             spline = make_interp_spline(t, waypoints, k=5, bc_type=bc_type)
             return t, spline
@@ -559,20 +556,17 @@ def _slsqp_time_optimal(
         a_peak = float(np.max(np.linalg.norm(sp.derivative(2)(ts), axis=1)))
         return v_peak, a_peak
 
-    def _obj(seg_t):
+    def _obj(seg_t: np.ndarray) -> float:
         return float(np.sum(seg_t))
 
-    def _v_constr(seg_t):
+    def _v_constr(seg_t: np.ndarray) -> float:
         return cfg.max_vel - _peaks(seg_t)[0]
 
-    def _a_constr(seg_t):
+    def _a_constr(seg_t: np.ndarray) -> float:
         return cfg.max_accel - _peaks(seg_t)[1]
 
     bounds = [(cfg.t_min_seg, None)] * n_seg
-    cons = [
-        {"type": "ineq", "fun": _v_constr},
-        {"type": "ineq", "fun": _a_constr},
-    ]
+    cons = [{"type": "ineq", "fun": _v_constr}, {"type": "ineq", "fun": _a_constr}]
     try:
         res = minimize(
             _obj,
@@ -582,7 +576,11 @@ def _slsqp_time_optimal(
             constraints=cons,
             options={"maxiter": 25, "ftol": 1e-4},
         )
-        if res.success and _peaks(res.x)[0] <= cfg.max_vel * 1.05 and _peaks(res.x)[1] <= cfg.max_accel * 1.1:
+        if (
+            res.success
+            and _peaks(res.x)[0] <= cfg.max_vel * 1.05
+            and _peaks(res.x)[1] <= cfg.max_accel * 1.1
+        ):
             return np.asarray(np.maximum(res.x, cfg.t_min_seg))
     except Exception:
         pass

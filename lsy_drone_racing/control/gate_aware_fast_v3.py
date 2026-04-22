@@ -23,13 +23,6 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-_WORKER_SUFFIX = (
-    f"_w{os.environ['LSY_FAST_WORKER_ID']}"
-    if os.environ.get("LSY_FAST_WORKER_ID")
-    else ""
-)
-_MODEL_NAME = f"gate_aware_fast_v3tcb{_WORKER_SUFFIX}"
-
 import casadi as ca
 import numpy as np
 import scipy
@@ -46,6 +39,13 @@ from lsy_drone_racing.control._racing_line import RacingLineConfig, build_racing
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+# Unique suffix for acados generated artifacts so parallel benchmark workers
+# (each with a distinct ``LSY_FAST_WORKER_ID``) do not clobber each other's
+# generated C code / JSON.
+_WORKER_SUFFIX = (
+    f"_w{os.environ['LSY_FAST_WORKER_ID']}" if os.environ.get("LSY_FAST_WORKER_ID") else ""
+)
+_MODEL_NAME = f"gate_aware_fast_v3tcb{_WORKER_SUFFIX}"
 
 _DIAG_PATH = Path("/tmp/lsy_diagnostics.csv")
 
@@ -102,9 +102,7 @@ def _build_ocp(
     # Tuned for cf21B_500 (m≈43g, T/W≈1.9). xy weights 75 (vs base 50) for
     # tighter lateral tracking through the 0.4 m gate openings; vel weights
     # 12 (vs 10) for smoother approaches.
-    Q = np.diag(
-        [75.0, 75.0, 400.0, 1.0, 1.0, 1.0, 12.0, 12.0, 12.0, 5.0, 5.0, 5.0]
-    )
+    Q = np.diag([75.0, 75.0, 400.0, 1.0, 1.0, 1.0, 12.0, 12.0, 12.0, 5.0, 5.0, 5.0])
     Rcost = np.diag([1.0, 1.0, 1.0, 50.0])
     Q_e = Q.copy()
 
@@ -186,9 +184,7 @@ def _build_ocp(
     ocp.solver_options.nlp_solver_max_iter = 10
     ocp.solver_options.tf = Tf
 
-    solver = AcadosOcpSolver(
-        ocp, json_file=f"c_generated_code/{_MODEL_NAME}.json", verbose=False
-    )
+    solver = AcadosOcpSolver(ocp, json_file=f"c_generated_code/{_MODEL_NAME}.json", verbose=False)
     return solver, ocp
 
 
@@ -208,20 +204,13 @@ class GateAwareFastV3(Controller):
     WING_OFFSET = 0.28  # distance along gate y/z axis to wing midpoint
     USE_RACING_LINE = False
     PLANNER = PlannerConfig(
-        d_pre=0.35,
-        d_post=0.20,
-        v_cruise=2.30,
-        v_cruise_inter=4.50,
-        t_min_seg=0.24,
-        r_obs=0.22,
+        d_pre=0.35, d_post=0.20, v_cruise=2.30, v_cruise_inter=4.50, t_min_seg=0.24, r_obs=0.22
     )
     RACING_LINE = RacingLineConfig(
         v_cruise=1.8, t_min_seg=0.15, max_accel=9.0, max_vel=4.0, r_obs=0.22
     )
 
-    def __init__(
-        self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict
-    ) -> None:
+    def __init__(self, obs: dict[str, NDArray[np.floating]], info: dict, config: dict) -> None:
         """Build MPC + initial plan."""
         super().__init__(obs, info, config)
         self._dt = 1.0 / config.env.freq
@@ -302,12 +291,10 @@ class GateAwareFastV3(Controller):
         self._plan_spline_ticks = n_samples
         self._tick = 0
 
-    def _current_gate_wings(
-        self, obs: dict[str, NDArray[np.floating]]
-    ) -> NDArray[np.floating]:
-        """Return (N_WINGS, 3) world-frame midpoints of the current target gate's
-        frame wings: left/right along gate y-axis, top/bottom along world z.
+    def _current_gate_wings(self, obs: dict[str, NDArray[np.floating]]) -> NDArray[np.floating]:
+        """Return (N_WINGS, 3) world-frame midpoints of the current target gate's frame wings.
 
+        Frame wings are left/right along the gate y-axis and top/bottom along world z.
         Parked far away when no live gate exists (target_gate == -1, or out of range).
         """
         tgt = int(obs["target_gate"])
@@ -326,6 +313,7 @@ class GateAwareFastV3(Controller):
     def compute_control(
         self, obs: dict[str, NDArray[np.floating]], info: dict | None = None
     ) -> NDArray[np.floating]:
+        """Return the MPC's first-step attitude command for the current observation."""
         if self._tick >= self._plan_spline_ticks + self.PLAN_PAD - self.N - 1:
             self._finished = True
         i = min(self._tick, self._plan_spline_ticks + self.PLAN_PAD - self.N - 2)
@@ -339,9 +327,7 @@ class GateAwareFastV3(Controller):
         # Build parameter vector: [obstacles_xy (flat), wings_xyz (flat)].
         obs_xy = np.asarray(obs["obstacles_pos"])[: self.N_OBSTACLES, :2].flatten()
         if obs_xy.size < 2 * self.N_OBSTACLES:
-            obs_xy = np.concatenate(
-                [obs_xy, np.full(2 * self.N_OBSTACLES - obs_xy.size, 1e6)]
-            )
+            obs_xy = np.concatenate([obs_xy, np.full(2 * self.N_OBSTACLES - obs_xy.size, 1e6)])
         wings_xyz = self._current_gate_wings(obs).flatten()
         param_vec = np.concatenate([obs_xy, wings_xyz])
         for j in range(self.N + 1):
@@ -373,6 +359,7 @@ class GateAwareFastV3(Controller):
         truncated: bool,
         info: dict,
     ) -> bool:
+        """Advance tick counters, snapshot terminal state, and trigger replans on sense events."""
         self._tick += 1
         self._flight_tick += 1
         target_gate = int(obs["target_gate"])
@@ -414,6 +401,7 @@ class GateAwareFastV3(Controller):
         return self._finished
 
     def episode_callback(self) -> None:
+        """Write a diagnostic row at episode end and reset per-episode state."""
         if self._terminal_state is not None:
             self._write_diagnostic(self._terminal_state)
         self._tick = 0
@@ -451,24 +439,58 @@ class GateAwareFastV3(Controller):
         with open(_DIAG_PATH, "a", newline="") as f:
             w = csv.writer(f)
             if header:
-                w.writerow([
-                    "run", "outcome", "t_flight", "target_gate",
-                    "pos_x", "pos_y", "pos_z", "vx", "vy", "vz", "speed",
-                    "near_obs_idx", "near_obs_xy_dist",
-                    "near_gate_idx", "near_gate_3d_dist",
-                    "tgt_local_x", "tgt_local_y", "tgt_local_z",
-                    "gate0_dist", "gate1_dist", "gate2_dist", "gate3_dist",
-                    "obs0_xy", "obs1_xy", "obs2_xy", "obs3_xy",
-                ])
-            w.writerow([
-                self._run_idx, outcome, f"{flight_time:.3f}", tgt,
-                f"{pos[0]:.3f}", f"{pos[1]:.3f}", f"{pos[2]:.3f}",
-                f"{vel[0]:.3f}", f"{vel[1]:.3f}", f"{vel[2]:.3f}",
-                f"{float(np.linalg.norm(vel)):.3f}",
-                nearest_obs_idx, f"{nearest_obs_dist:.3f}",
-                nearest_gate_idx, f"{nearest_gate_dist:.3f}",
-                f"{local_x:.3f}", f"{local_y:.3f}", f"{local_z:.3f}",
-                *[f"{d:.3f}" for d in gate_dists],
-                *[f"{d:.3f}" for d in obs_dists_2d],
-            ])
+                w.writerow(
+                    [
+                        "run",
+                        "outcome",
+                        "t_flight",
+                        "target_gate",
+                        "pos_x",
+                        "pos_y",
+                        "pos_z",
+                        "vx",
+                        "vy",
+                        "vz",
+                        "speed",
+                        "near_obs_idx",
+                        "near_obs_xy_dist",
+                        "near_gate_idx",
+                        "near_gate_3d_dist",
+                        "tgt_local_x",
+                        "tgt_local_y",
+                        "tgt_local_z",
+                        "gate0_dist",
+                        "gate1_dist",
+                        "gate2_dist",
+                        "gate3_dist",
+                        "obs0_xy",
+                        "obs1_xy",
+                        "obs2_xy",
+                        "obs3_xy",
+                    ]
+                )
+            w.writerow(
+                [
+                    self._run_idx,
+                    outcome,
+                    f"{flight_time:.3f}",
+                    tgt,
+                    f"{pos[0]:.3f}",
+                    f"{pos[1]:.3f}",
+                    f"{pos[2]:.3f}",
+                    f"{vel[0]:.3f}",
+                    f"{vel[1]:.3f}",
+                    f"{vel[2]:.3f}",
+                    f"{float(np.linalg.norm(vel)):.3f}",
+                    nearest_obs_idx,
+                    f"{nearest_obs_dist:.3f}",
+                    nearest_gate_idx,
+                    f"{nearest_gate_dist:.3f}",
+                    f"{local_x:.3f}",
+                    f"{local_y:.3f}",
+                    f"{local_z:.3f}",
+                    *[f"{d:.3f}" for d in gate_dists],
+                    *[f"{d:.3f}" for d in obs_dists_2d],
+                ]
+            )
         self._tick = 0
