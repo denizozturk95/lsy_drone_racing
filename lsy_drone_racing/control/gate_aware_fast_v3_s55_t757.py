@@ -181,7 +181,7 @@ class GateAwareFastV3S55T757(Controller):
     PLAN_PAD = 200
     N_OBSTACLES = 4
     N_WINGS = 4
-    R_SAFE = 0.24
+    R_SAFE = 0.20
     R_WING = 0.13
     W_OBS = 150000.0
     W_WING = 80000.0
