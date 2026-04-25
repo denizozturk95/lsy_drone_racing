@@ -1,10 +1,3 @@
-"""Shared gate-aware cubic-spline planner.
-
-Used by both the state-mode and attitude-MPC controllers. Given a drone state
-and observed gate/obstacle poses, builds a clamped cubic spline threading the
-approach/center/exit waypoints of each remaining gate, with lateral midpoints
-inserted where a segment passes too close to an observed obstacle.
-"""
 
 from __future__ import annotations
 
@@ -29,6 +22,38 @@ class PlannerConfig:
     v_cruise_inter: float = 0.0  # inter-gate cruise (>v_cruise to speed up). 0 disables.
     t_min_seg: float = 0.4
     r_obs: float = 0.28
+    # Per-gate overrides (indexed by original gate index, 0-based). Entries
+    # missing or NaN fall back to the global ``d_pre`` / ``d_post`` /
+    # ``v_cruise``. Lets us shrink approach on tight gates while keeping a
+    # longer runway on others, or run a specific gate slower without
+    # penalising the whole track.
+    d_pre_per_gate: tuple[float, ...] = ()
+    d_post_per_gate: tuple[float, ...] = ()
+    v_peri_per_gate: tuple[float, ...] = ()
+
+    def d_pre_for(self, gi: int) -> float:
+        """Per-gate approach distance, falling back to the global ``d_pre``."""
+        if 0 <= gi < len(self.d_pre_per_gate):
+            v = self.d_pre_per_gate[gi]
+            if np.isfinite(v) and v > 0:
+                return float(v)
+        return self.d_pre
+
+    def d_post_for(self, gi: int) -> float:
+        """Per-gate exit distance, falling back to the global ``d_post``."""
+        if 0 <= gi < len(self.d_post_per_gate):
+            v = self.d_post_per_gate[gi]
+            if np.isfinite(v) and v > 0:
+                return float(v)
+        return self.d_post
+
+    def v_peri_for(self, gi: int) -> float:
+        """Per-gate peri-cruise speed, falling back to the global ``v_cruise``."""
+        if 0 <= gi < len(self.v_peri_per_gate):
+            v = self.v_peri_per_gate[gi]
+            if np.isfinite(v) and v > 0:
+                return float(v)
+        return self.v_cruise
     # Time-optimal refinement caps (0 to disable). The heuristic refiner
     # iterates per-segment toward target utilization; the slsqp refiner
     # solves a small NLP (min sum(seg_t) s.t. peak vel/accel caps).
@@ -74,13 +99,9 @@ def build_plan(
 
     remaining_pos = gates_pos[target_gate:]
     remaining_quat = gates_quat[target_gate:]
-    wps = _build_waypoints(start_pos, remaining_pos, remaining_quat, obstacles_pos, cfg)
-    # Replan guard: if the drone has just passed a gate (target_gate > 0) and
-    # is still within ~0.6 m of that gate, the cubic spline built from the
-    # current velocity can dip back through the exited gate's frame. Prepend
-    # the same clearance + turn_apex waypoints that the forward build would
-    # have produced for that transition, pinning the spline above (or below)
-    # the exited frame.
+    wps = _build_waypoints(
+        start_pos, remaining_pos, remaining_quat, obstacles_pos, cfg, target_gate=target_gate
+    ) 
     if target_gate > 0 and target_gate < len(gates_pos) and not cfg.skip_clearance:
         prev_gp = gates_pos[target_gate - 1]
         if float(np.linalg.norm(start_pos - prev_gp)) < 0.6:
@@ -91,6 +112,8 @@ def build_plan(
                 gates_quat[target_gate],
                 obstacles_pos,
                 cfg,
+                prev_gi_abs=target_gate - 1,
+                next_gi_abs=target_gate,
             )
             if extras is not None:
                 wps = np.vstack([wps[:1], extras, wps[1:]])
@@ -158,6 +181,8 @@ def _exited_gate_clearance(
     next_quat: NDArray[np.floating],
     obstacles_pos: NDArray[np.floating],
     cfg: PlannerConfig,
+    prev_gi_abs: int = -1,
+    next_gi_abs: int = -1,
 ) -> NDArray[np.floating] | None:
     """Return clearance + turn_apex waypoints for a recently-exited gate.
 
@@ -171,8 +196,10 @@ def _exited_gate_clearance(
     prev_x_axis = prev_rot[:, 0]
     next_rot = R.from_quat(next_quat).as_matrix()
     next_x_axis = next_rot[:, 0]
-    next_approach = next_gp - cfg.d_pre * next_x_axis
-    clearance_xy = (prev_gp + (cfg.d_post + 0.60) * prev_x_axis)[:2]
+    prev_d_post = cfg.d_post_for(prev_gi_abs)
+    next_d_pre = cfg.d_pre_for(next_gi_abs)
+    next_approach = next_gp - next_d_pre * next_x_axis
+    clearance_xy = (prev_gp + (prev_d_post + 0.60) * prev_x_axis)[:2]
     if float(next_gp[2]) > float(prev_gp[2]):
         z_c = max(float(prev_gp[2]) + 0.55, float(next_gp[2]) - 0.05)
         z_apex = float(next_gp[2]) + 0.05
@@ -195,10 +222,9 @@ def _build_waypoints(
     gates_quat: NDArray[np.floating],
     obstacles_pos: NDArray[np.floating],
     cfg: PlannerConfig,
+    target_gate: int = 0,
 ) -> NDArray[np.floating]:
-    wps: list[NDArray[np.floating]] = [start_pos.copy()]
-    # Lift-off waypoint when the drone is on the ground: climb in place to
-    # half the first gate's height before starting horizontal motion.
+    wps: list[NDArray[np.floating]] = [start_pos.copy()] 
     if start_pos[2] < 0.15 and len(gates_pos) > 0:
         first_gate_z = float(gates_pos[0][2])
         target_z = max(0.4, 0.5 * first_gate_z)
@@ -209,69 +235,52 @@ def _build_waypoints(
         wps.append(liftoff)
     n_gates = len(gates_pos)
     for gi, (gp, gq) in enumerate(zip(gates_pos, gates_quat)):
+        gi_abs = target_gate + gi
+        d_pre_gi = cfg.d_pre_for(gi_abs)
+        d_post_gi = cfg.d_post_for(gi_abs)
         rot = R.from_quat(gq).as_matrix()
         x_axis, y_axis = rot[:, 0], rot[:, 1]
-        approach_raw = gp - cfg.d_pre * x_axis
-        exit_raw = gp + cfg.d_post * x_axis
-        # Bias the approach nudge toward whichever side of the gate y-axis
-        # the previous waypoint lies on, so near-tie nudges (obstacle exactly
-        # on approach axis) keep the drone on its incoming side and avoid an
-        # S-curve into the gate.
+        approach_raw = gp - d_pre_gi * x_axis
+        exit_raw = gp + d_post_gi * x_axis 
         prev_wp = wps[-1]
         bias = float(np.dot((prev_wp - approach_raw)[:2], y_axis[:2]))
         bias_sign = np.sign(bias) if abs(bias) > 1e-3 else 0.0
         approach = _nudge_lateral(
             approach_raw, y_axis, obstacles_pos, cfg.r_obs, bias_sign=bias_sign
         )
-        exit_ = _nudge_lateral(exit_raw, y_axis, obstacles_pos, cfg.r_obs)
-        # If the approach had to be nudged laterally, the spline tangent at
-        # the gate blends an off-axis arc with the on-axis exit — giving a
-        # diagonal entry that clips the gate frame. Insert a short on-axis
-        # "near-gate" waypoint 0.15 m before the gate so the tangent at the
-        # gate center is forced to align with the gate x-axis.
+        exit_ = _nudge_lateral(exit_raw, y_axis, obstacles_pos, cfg.r_obs) 
+        gap_to_approach = float(np.linalg.norm((approach - prev_wp)[:2]))
+        lateral_off = float(abs(np.dot((prev_wp - approach)[:2], y_axis[:2])))
+        if gap_to_approach > 0.55 and lateral_off > 0.12:
+            far_approach = _nudge_lateral(
+                gp - (d_pre_gi + 0.50) * x_axis,
+                y_axis,
+                obstacles_pos,
+                cfg.r_obs,
+                bias_sign=bias_sign,
+            )
+            wps.append(far_approach) 
         nudge_dist = float(np.linalg.norm((approach - approach_raw)[:2]))
         if nudge_dist > 0.05:
             near_gate = gp - 0.15 * x_axis
             wps.extend([approach, near_gate, gp.copy(), exit_])
         else:
-            wps.extend([approach, gp.copy(), exit_])
-        # If the next gate is significantly above/below, the tangent at the
-        # spline's exit points toward it — the drone climbs/descends while
-        # returning through the just-passed gate's plane and its bounding
-        # box clips the horizontal frame bars (frame opening is ±0.2, frame
-        # outer is ±0.36 from center). Insert a post-exit "clearance"
-        # waypoint further along the exit x-axis AT A Z THAT PLACES the
-        # subsequent line-to-next-approach *above* the frame top. Concretely:
-        # the clearance sits 0.35 m past the exit, with z chosen so linear
-        # interpolation to the next approach crosses the gate plane at
-        # gate_z + 0.40 m (frame outer-edge top is gate_z + 0.36 m).
+            wps.extend([approach, gp.copy(), exit_]) 
         if gi + 1 < n_gates and not cfg.skip_clearance:
             next_gp = gates_pos[gi + 1]
             next_rot = R.from_quat(gates_quat[gi + 1]).as_matrix()
             next_x_axis = next_rot[:, 0]
-            next_approach_raw = next_gp - cfg.d_pre * next_x_axis
+            next_d_pre = cfg.d_pre_for(gi_abs + 1)
+            next_approach_raw = next_gp - next_d_pre * next_x_axis
             next_z = float(next_approach_raw[2])
             if abs(next_z - gp[2]) > 0.15:
-                clearance_xy = (gp + (cfg.d_post + 0.60) * x_axis)[:2]
-                # Place the clearance waypoint at a z that safely clears the
-                # exited gate's frame top/bottom (frame half-extent is 0.36 m,
-                # +0.10 m safety margin). The cubic spline through a climb/
-                # descent turn tends to overshoot back toward the exited gate
-                # plane; positioning clearance at safe-side-of-frame ensures
-                # the dip still clears.
+                clearance_xy = (gp + (d_post_gi + 0.60) * x_axis)[:2] 
                 if next_z > gp[2]:
                     z_c = max(gp[2] + 0.55, next_z - 0.05)
                 else:
                     z_c = min(gp[2] - 0.55, next_z + 0.05)
                 clearance = np.array([clearance_xy[0], clearance_xy[1], z_c])
-                wps.append(clearance)
-                # For sharp turns (e.g. gate 2 → gate 3, ~180°), the cubic
-                # spline from clearance → next_approach curves through the
-                # gate plane. Insert a turn_apex waypoint at a z above the
-                # exited frame top (or below the bottom) with xy placed on
-                # the clearance-to-approach line but pushed slightly away
-                # from the exited gate center — pins the spline into the
-                # safe altitude band during the turn.
+                wps.append(clearance) 
                 next_approach_xy = next_approach_raw[:2]
                 mid_xy = 0.5 * (clearance_xy + next_approach_xy)
                 away = mid_xy - gp[:2]
@@ -285,7 +294,9 @@ def _build_waypoints(
                 turn_apex = np.array([mid_xy[0], mid_xy[1], z_apex])
                 wps.append(turn_apex)
     last_x = R.from_quat(gates_quat[-1]).as_matrix()[:, 0]
-    wps.append(gates_pos[-1] + (cfg.d_post + cfg.d_stop) * last_x)
+    last_gi_abs = target_gate + n_gates - 1
+    last_d_post = cfg.d_post_for(last_gi_abs)
+    wps.append(gates_pos[-1] + (last_d_post + cfg.d_stop) * last_x)
     wps_arr = np.asarray(wps)
     return _insert_obstacle_midpoints(wps_arr, obstacles_pos, cfg.r_obs)
 
@@ -343,20 +354,7 @@ def _nudge_lateral(
     obstacles_pos: NDArray[np.floating],
     r_obs: float,
     bias_sign: float = 0.0,
-) -> NDArray[np.floating]:
-    """Shift ``point`` along ``lateral`` (gate y-axis) until clear of all obstacles (2D).
-
-    Preserves the along-gate-x-axis component so the drone still enters perpendicular.
-    Falls back to radial nudging if lateral direction is degenerate (e.g. vertical gate).
-
-    ``bias_sign`` (in the lateral direction's sign) breaks near-ties: when the
-    obstacle sits on the approach axis both ``+y`` and ``-y`` shifts are valid,
-    and picking the minimum-abs shift alone can route the drone to the wrong
-    side of the gate (e.g. the drone coming from the north ends up on a
-    south-side approach, forcing a 45° S-curve into the gate). When
-    ``bias_sign`` is nonzero and the matching-side shift is at most ~1.5× the
-    other, prefer it.
-    """
+) -> NDArray[np.floating]: 
     y2 = lateral[:2]
     yn = float(np.linalg.norm(y2))
     if yn < 1e-6:
@@ -475,23 +473,20 @@ def _build_spline(
     v_inter = cfg.v_cruise_inter if cfg.v_cruise_inter > 0 else cfg.v_cruise
     seg_t = np.empty(len(seg_len))
     for i in range(len(seg_len)):
-        v = cfg.v_cruise
-        if gates_pos is not None and v_inter > cfg.v_cruise:
-            peri = False
-            for gp in gates_pos:
+        peri_gi = -1
+        if gates_pos is not None:
+            for gj, gp in enumerate(gates_pos):
                 if float(np.linalg.norm(waypoints[i, :2] - gp[:2])) < 0.55:
-                    peri = True
+                    peri_gi = gj
                     break
                 if float(np.linalg.norm(waypoints[i + 1, :2] - gp[:2])) < 0.55:
-                    peri = True
+                    peri_gi = gj
                     break
-            if not peri:
-                v = v_inter
-        seg_t[i] = max(seg_len[i] / v, cfg.t_min_seg)
-    # Stretch (slow) segments whose 2D path comes very close to an obstacle.
-    # Tight threshold + capped stretch so we don't blow up cycle times.
-    # Inversely, shrink (speed up) obstacle-free segments that are also well
-    # clear of any gate center, letting the drone run faster on open stretches.
+        if peri_gi >= 0:
+            v = cfg.v_peri_for(peri_gi)
+        else:
+            v = v_inter
+        seg_t[i] = max(seg_len[i] / v, cfg.t_min_seg) 
     if len(obstacles_pos) > 0:
         slow_radius = 0.32
         for i in range(len(waypoints) - 1):
@@ -593,14 +588,7 @@ def _time_optimal_refine(
     start_vel: NDArray[np.floating],
     seg_t: NDArray[np.floating],
     cfg: PlannerConfig,
-) -> NDArray[np.floating]:
-    """Iteratively shrink segments with headroom under the peak vel/accel caps.
-
-    This is a gradient-free, monotone heuristic: each pass computes per-segment
-    peak velocity and acceleration on the current spline, then scales each
-    segment's time by a factor in (0.85, 1.15) chosen so that the peak utilization
-    approaches (but does not exceed) the cap. Converges in ~6 iterations.
-    """
+) -> NDArray[np.floating]: 
     seg_t = np.asarray(seg_t, dtype=np.float64).copy()
     bc = ((1, np.asarray(start_vel, dtype=np.float64)), (1, np.zeros(3)))
     for _ in range(8):
