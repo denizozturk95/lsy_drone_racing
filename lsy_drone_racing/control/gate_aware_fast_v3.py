@@ -178,12 +178,11 @@ def _build_ocp(
     ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
     ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
     ocp.solver_options.integrator_type = "ERK"
-    ocp.solver_options.nlp_solver_type = "SQP"
+    ocp.solver_options.nlp_solver_type = "SQP_RTI"
     ocp.solver_options.tol = 1e-4
     ocp.solver_options.qp_solver_cond_N = N
     ocp.solver_options.qp_solver_warm_start = 1
-    ocp.solver_options.qp_solver_iter_max = 60
-    ocp.solver_options.nlp_solver_max_iter = 20
+    ocp.solver_options.qp_solver_iter_max = 80
     ocp.solver_options.tf = Tf
 
     solver = AcadosOcpSolver(ocp, json_file=f"c_generated_code/{_MODEL_NAME}.json", verbose=False)
@@ -195,7 +194,7 @@ class GateAwareFastV3(Controller):
 
     _run_counter = 0
 
-    N = 35
+    N = 30
     PLAN_PAD = 200
     REPLAN_PERIOD_TICKS = 0  # disabled — periodic replan caused tracking discontinuity
     N_OBSTACLES = 4
@@ -208,12 +207,12 @@ class GateAwareFastV3(Controller):
     USE_RACING_LINE = False
     PLANNER = PlannerConfig(
         d_pre=0.28,
-        d_post=0.13,
+        d_post=0.14,
         v_cruise=2.75,
-        v_cruise_inter=5.20,
-        t_min_seg=0.18,
+        v_cruise_inter=5.10,
+        t_min_seg=0.19,
         r_obs=0.24,
-        d_post_per_gate=(0.13, 0.15, 0.19, 0.22),
+        d_post_per_gate=(0.14, 0.16, 0.20, 0.23),
         d_pre_per_gate=(0.40, 0.28, 0.30, 0.28),
         v_peri_per_gate=(2.15, 2.75, 2.75, 2.75),
     )
