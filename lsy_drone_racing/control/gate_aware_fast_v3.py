@@ -131,6 +131,8 @@ def _build_ocp(
     # Command (input) bounds remain tighter at ±0.80 rad since they directly
     # drive the attitude controller; the drone's actual roll can overshoot
     # commanded via body dynamics under large angular rates.
+    # Yaw bound widened to ±1.5 rad: at ±0.5 the OCP went infeasible during
+    # fast gate-2/3 transitions, causing stale-control ground strikes.
     ocp.constraints.lbx = np.array([-1.20, -1.20, -1.5])
     ocp.constraints.ubx = np.array([1.20, 1.20, 1.5])
     ocp.constraints.idxbx = np.array([3, 4, 5])
@@ -180,8 +182,8 @@ def _build_ocp(
     ocp.solver_options.tol = 1e-4
     ocp.solver_options.qp_solver_cond_N = N
     ocp.solver_options.qp_solver_warm_start = 1
-    ocp.solver_options.qp_solver_iter_max = 40
-    ocp.solver_options.nlp_solver_max_iter = 10
+    ocp.solver_options.qp_solver_iter_max = 60
+    ocp.solver_options.nlp_solver_max_iter = 20
     ocp.solver_options.tf = Tf
 
     solver = AcadosOcpSolver(ocp, json_file=f"c_generated_code/{_MODEL_NAME}.json", verbose=False)
@@ -195,16 +197,25 @@ class GateAwareFastV3(Controller):
 
     N = 35
     PLAN_PAD = 200
+    REPLAN_PERIOD_TICKS = 0  # disabled — periodic replan caused tracking discontinuity
     N_OBSTACLES = 4
     N_WINGS = 4
-    R_SAFE = 0.24
-    R_WING = 0.13
-    W_OBS = 50000.0
-    W_WING = 80000.0
+    R_SAFE = 0.20
+    R_WING = 0.14
+    W_OBS = 150000.0
+    W_WING = 250000.0
     WING_OFFSET = 0.28  # distance along gate y/z axis to wing midpoint
     USE_RACING_LINE = False
     PLANNER = PlannerConfig(
-        d_pre=0.35, d_post=0.20, v_cruise=2.30, v_cruise_inter=3.50, t_min_seg=0.24, r_obs=0.22
+        d_pre=0.28,
+        d_post=0.13,
+        v_cruise=2.75,
+        v_cruise_inter=5.20,
+        t_min_seg=0.18,
+        r_obs=0.24,
+        d_post_per_gate=(0.13, 0.15, 0.19, 0.22),
+        d_pre_per_gate=(0.40, 0.28, 0.30, 0.28),
+        v_peri_per_gate=(2.15, 2.75, 2.75, 2.75),
     )
     RACING_LINE = RacingLineConfig(
         v_cruise=1.8, t_min_seg=0.15, max_accel=9.0, max_vel=4.0, r_obs=0.22
@@ -394,7 +405,12 @@ class GateAwareFastV3(Controller):
         obstacles_visited = np.asarray(obs["obstacles_visited"])
         new_gate = bool((gates_visited & ~self._prev_gates_visited).any())
         new_obstacle = bool((obstacles_visited & ~self._prev_obstacles_visited).any())
-        if new_gate or new_obstacle:
+        periodic_replan = (
+            self.REPLAN_PERIOD_TICKS > 0
+            and self._flight_tick > 0
+            and self._flight_tick % self.REPLAN_PERIOD_TICKS == 0
+        )
+        if new_gate or new_obstacle or periodic_replan:
             self._replan(obs, start_vel=np.asarray(obs["vel"]), target_gate=target_gate)
         self._prev_gates_visited = gates_visited.copy()
         self._prev_obstacles_visited = obstacles_visited.copy()
