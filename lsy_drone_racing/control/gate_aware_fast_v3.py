@@ -1,21 +1,3 @@
-"""Gate-aware attitude MPC with parametric soft obstacle constraints (milestone 2).
-
-Combines the gate-aware cubic-spline planner (:mod:`_planner`) with a custom
-acados nonlinear MPC. The OCP carries obstacle xy positions as runtime
-parameters so the MPC actively avoids obstacles regardless of where the
-spline reference passes — a soft-constraint penalty repels the predicted
-trajectory if it gets within ``R_SAFE`` (xy) of any observed obstacle.
-
-On controller construction the plan is built from the reset observation
-(nominal gate poses); on every step the plan is re-anchored at the drone's
-current state when a gate or obstacle first enters ``sensor_range``. The
-plan is densely sampled at env frequency so the MPC reads the next ``N``
-``(pos, vel)`` tuples as horizon reference.
-
-Returns 4-dim attitude commands ``[roll, pitch, yaw, collective_thrust]`` —
-requires ``env.control_mode = "attitude"`` in the config.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -61,12 +43,6 @@ def _build_ocp(
     r_wing: float = 0.13,
     w_wing: float = 80000.0,
 ) -> tuple[AcadosOcpSolver, AcadosOcp]:
-    """Build an acados OCP with parametric soft obstacle + current-gate wing constraints.
-
-    Parameters (``model.p``) layout:
-      [0 : 2*n_obstacles]      — obstacles xy (2D), constrained in xy
-      [2*n_obstacles : 2*n_obstacles + 3*n_wings] — wing centers xyz (3D)
-    """
     X_dot, X, U, _ = symbolic_dynamics_euler(
         mass=parameters["mass"],
         gravity_vec=parameters["gravity_vec"],
@@ -121,18 +97,7 @@ def _build_ocp(
     Vx_e[0:nx, 0:nx] = np.eye(nx)
     ocp.cost.Vx_e = Vx_e
     ocp.cost.yref = np.zeros((ny,))
-    ocp.cost.yref_e = np.zeros((ny_e,))
-
-    # Attitude state bounds on roll/pitch kept generous (±1.20 rad ≈ 69°) so
-    # that the MPC's QP stays feasible even when the drone physically tilts
-    # past the "preferred" range during aggressive gate transitions. The cost
-    # function (Q diag=1.0 on rpy) still discourages large tilts, but we no
-    # longer make the OCP infeasible when x0's measured rpy exceeds the bound.
-    # Command (input) bounds remain tighter at ±0.80 rad since they directly
-    # drive the attitude controller; the drone's actual roll can overshoot
-    # commanded via body dynamics under large angular rates.
-    # Yaw bound widened to ±1.5 rad: at ±0.5 the OCP went infeasible during
-    # fast gate-2/3 transitions, causing stale-control ground strikes.
+    ocp.cost.yref_e = np.zeros((ny_e,)) 
     ocp.constraints.lbx = np.array([-1.20, -1.20, -1.5])
     ocp.constraints.ubx = np.array([1.20, 1.20, 1.5])
     ocp.constraints.idxbx = np.array([3, 4, 5])
@@ -140,9 +105,7 @@ def _build_ocp(
     ocp.constraints.ubu = np.array([0.80, 0.80, 1.0, parameters["thrust_max"] * 4])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3])
     ocp.constraints.x0 = np.zeros((nx,))
-
-    # Soft constraints: squared 2D distance to each obstacle >= r_safe**2, plus
-    # squared 3D distance to each wing of the current target gate >= r_wing**2.
+ 
     p_drone_xy = X[0:2]
     p_drone_xyz = X[0:3]
     dist_sq_terms = []
@@ -191,8 +154,6 @@ def _build_ocp(
 
 
 class GateAwareFastV3(Controller):
-    """Attitude-mode MPC with parametric obstacle soft constraints."""
-
     _run_counter = 0
 
     N = 30
@@ -207,13 +168,8 @@ class GateAwareFastV3(Controller):
     W_WING = 250000.0
     WING_OFFSET = 0.28  # distance along gate y/z axis to wing midpoint
     USE_MPC = True  # if False, run PD+I always (skip MPC entirely)
-    # Per-leg obstacle filter (SarNi idea): only the listed obstacle indices
-    # are passed live to the MPC for each target gate; the rest are parked far.
-    # Cuts active soft constraints from 4 to 1-2 per step → easier QP, less
-    # over-constraining when obstacles are far from current path.
     LEG_OBSTACLES = ((0,), (0, 1), (1, 2), (2, 3))  # legacy, unused
     ACTIVE_OBS_RADIUS = 0.50  # obstacles within this xy-dist of MPC horizon stay live
-    # PD+I gains for fallback tracker (SarNi attitude.py).
     PDI_KP = np.array([0.57, 0.57, 1.55], dtype=np.float64)
     PDI_KI = np.array([0.045, 0.045, 0.05], dtype=np.float64)
     PDI_KD = np.array([0.50, 0.50, 0.50], dtype=np.float64)
@@ -323,12 +279,7 @@ class GateAwareFastV3(Controller):
         self._plan_spline_ticks = n_samples
         self._tick = 0
 
-    def _current_gate_wings(self, obs: dict[str, NDArray[np.floating]]) -> NDArray[np.floating]:
-        """Return (N_WINGS, 3) world-frame midpoints of the current target gate's frame wings.
-
-        Frame wings are left/right along the gate y-axis and top/bottom along world z.
-        Parked far away when no live gate exists (target_gate == -1, or out of range).
-        """
+    def _current_gate_wings(self, obs: dict[str, NDArray[np.floating]]) -> NDArray[np.floating]: 
         tgt = int(obs["target_gate"])
         if tgt < 0 or tgt >= len(obs["gates_pos"]):
             return np.full((self.N_WINGS, 3), 100.0)
@@ -342,14 +293,7 @@ class GateAwareFastV3(Controller):
 
     def _active_obstacles_xy(
         self, obs: dict[str, NDArray[np.floating]], horizon_xy: NDArray[np.floating]
-    ) -> NDArray[np.floating]:
-        """Return (N_OBSTACLES, 2): obstacles within ``ACTIVE_OBS_RADIUS`` of horizon, rest parked.
-
-        Parked at 100 m so the squared-distance soft constraint is trivially
-        inactive without HPIPM Hessian overflow (1e6 caused status 3 each step).
-        Adaptive filter — robust to randomization that may shift obstacles into
-        or out of the static SarNi-style per-leg list.
-        """
+    ) -> NDArray[np.floating]: 
         all_xy = np.asarray(obs["obstacles_pos"], dtype=np.float64)[: self.N_OBSTACLES, :2]
         out = np.full((self.N_OBSTACLES, 2), 100.0, dtype=np.float64)
         for k, oxy in enumerate(all_xy):
@@ -384,10 +328,6 @@ class GateAwareFastV3(Controller):
         x0 = np.concatenate((obs["pos"], rpy, obs["vel"], drpy))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
-
-        # Adaptive obstacle filter: only obstacles near the MPC horizon are
-        # active; rest parked at 100 m so soft constraint is inactive. Cuts
-        # active soft constraints, easing QP conditioning.
         horizon_xy = self._pos_samples[i : i + self.N + 1, :2]
         obs_xy = self._active_obstacles_xy(obs, horizon_xy).flatten()
         wings_xyz = self._current_gate_wings(obs).flatten()
@@ -418,11 +358,6 @@ class GateAwareFastV3(Controller):
             -self.PDI_I_CLAMP,
             self.PDI_I_CLAMP,
         )
-        # PD+I fallback: when QP solver reports an error (typ. status 3 =
-        # ill-conditioned QP), the MPC's first-step input may be garbage. Drop
-        # to closed-form geometric tracking on the same plan reference. Status
-        # 0 (success) and 2 (max_iter, but iterates are usually usable) keep
-        # the MPC output. SarNi-style PD + accel feedforward.
         if status not in (0, 2):
             return self._pdi_track(obs, i)
         u0 = self._acados_ocp_solver.get(0, "u")
@@ -431,11 +366,6 @@ class GateAwareFastV3(Controller):
     def _pdi_track(
         self, obs: dict[str, NDArray[np.floating]], i: int
     ) -> NDArray[np.floating]:
-        """Closed-form attitude command tracking the plan's i-th sample.
-
-        Integrator (``self._pdi_i_err``) is updated upstream on every tick so
-        this method just reads the warm value — fallback engages without lag.
-        """
         ref_pos = self._pos_samples[i]
         ref_vel = self._vel_samples[i]
         ref_acc = self._acc_samples[i].copy()
@@ -474,7 +404,6 @@ class GateAwareFastV3(Controller):
         truncated: bool,
         info: dict,
     ) -> bool:
-        """Advance tick counters, snapshot terminal state, and trigger replans on sense events."""
         self._tick += 1
         self._flight_tick += 1
         target_gate = int(obs["target_gate"])
@@ -514,9 +443,6 @@ class GateAwareFastV3(Controller):
             and self._flight_tick > 0
             and self._flight_tick % self.REPLAN_PERIOD_TICKS == 0
         )
-        # Tracking-error-based replan: if drone has drifted far from current
-        # reference, the existing plan is stale — refresh from current state
-        # so MPC sees a sane horizon. Skip for first 5 ticks (lift-off transient).
         track_err_replan = False
         if self.REPLAN_TRACK_ERR > 0 and self._tick > 5 and not disabled_warped:
             i = min(self._tick, self._plan_spline_ticks + self.PLAN_PAD - self.N - 2)
