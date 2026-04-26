@@ -178,11 +178,12 @@ def _build_ocp(
     ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
     ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
     ocp.solver_options.integrator_type = "ERK"
-    ocp.solver_options.nlp_solver_type = "SQP_RTI"
+    ocp.solver_options.nlp_solver_type = "SQP"
     ocp.solver_options.tol = 1e-4
     ocp.solver_options.qp_solver_cond_N = N
     ocp.solver_options.qp_solver_warm_start = 1
     ocp.solver_options.qp_solver_iter_max = 80
+    ocp.solver_options.nlp_solver_max_iter = 20
     ocp.solver_options.tf = Tf
 
     solver = AcadosOcpSolver(ocp, json_file=f"c_generated_code/{_MODEL_NAME}.json", verbose=False)
@@ -197,6 +198,7 @@ class GateAwareFastV3(Controller):
     N = 30
     PLAN_PAD = 200
     REPLAN_PERIOD_TICKS = 0  # disabled — periodic replan caused tracking discontinuity
+    REPLAN_TRACK_ERR = 0.0  # disabled — track-err replan creates slow-tail runs
     N_OBSTACLES = 4
     N_WINGS = 4
     R_SAFE = 0.20
@@ -204,17 +206,31 @@ class GateAwareFastV3(Controller):
     W_OBS = 150000.0
     W_WING = 250000.0
     WING_OFFSET = 0.28  # distance along gate y/z axis to wing midpoint
+    USE_MPC = True  # if False, run PD+I always (skip MPC entirely)
+    # Per-leg obstacle filter (SarNi idea): only the listed obstacle indices
+    # are passed live to the MPC for each target gate; the rest are parked far.
+    # Cuts active soft constraints from 4 to 1-2 per step → easier QP, less
+    # over-constraining when obstacles are far from current path.
+    LEG_OBSTACLES = ((0,), (0, 1), (1, 2), (2, 3))  # legacy, unused
+    ACTIVE_OBS_RADIUS = 0.50  # obstacles within this xy-dist of MPC horizon stay live
+    # PD+I gains for fallback tracker (SarNi attitude.py).
+    PDI_KP = np.array([0.57, 0.57, 1.55], dtype=np.float64)
+    PDI_KI = np.array([0.045, 0.045, 0.05], dtype=np.float64)
+    PDI_KD = np.array([0.50, 0.50, 0.50], dtype=np.float64)
+    PDI_I_CLAMP = np.array([1.5, 1.5, 0.4], dtype=np.float64)
+    PDI_FF_SCALE = 0.9
+    PDI_ACC_CAP = 12.0
     USE_RACING_LINE = False
     PLANNER = PlannerConfig(
         d_pre=0.28,
         d_post=0.14,
-        v_cruise=2.75,
+        v_cruise=2.72,
         v_cruise_inter=5.10,
         t_min_seg=0.19,
         r_obs=0.24,
         d_post_per_gate=(0.14, 0.16, 0.20, 0.23),
         d_pre_per_gate=(0.40, 0.28, 0.30, 0.28),
-        v_peri_per_gate=(2.15, 2.75, 2.75, 2.75),
+        v_peri_per_gate=(2.10, 2.70, 2.70, 2.70),
     )
     RACING_LINE = RacingLineConfig(
         v_cruise=1.8, t_min_seg=0.15, max_accel=9.0, max_vel=4.0, r_obs=0.22
@@ -248,6 +264,8 @@ class GateAwareFastV3(Controller):
         self._plan_spline_ticks = 0
         self._pos_samples = np.zeros((0, 3))
         self._vel_samples = np.zeros((0, 3))
+        self._acc_samples = np.zeros((0, 3))
+        self._pdi_i_err = np.zeros(3, dtype=np.float64)
         self._replan(obs, start_vel=np.zeros(3), target_gate=0)
 
         self._prev_gates_visited = np.asarray(obs["gates_visited"]).copy()
@@ -294,10 +312,14 @@ class GateAwareFastV3(Controller):
         ts = np.clip(ts, 0.0, plan.t_total)
         pos = plan.pos_spline(ts)
         vel = plan.vel_spline(ts)
+        acc_spline = plan.pos_spline.derivative(2)
+        acc = acc_spline(ts)
         pad_pos = np.tile(pos[-1], (self.PLAN_PAD, 1))
         pad_vel = np.zeros((self.PLAN_PAD, 3))
+        pad_acc = np.zeros((self.PLAN_PAD, 3))
         self._pos_samples = np.vstack([pos, pad_pos])
         self._vel_samples = np.vstack([vel, pad_vel])
+        self._acc_samples = np.vstack([acc, pad_acc])
         self._plan_spline_ticks = n_samples
         self._tick = 0
 
@@ -318,6 +340,24 @@ class GateAwareFastV3(Controller):
         bottom = gp - self.WING_OFFSET * np.array([0.0, 0.0, 1.0])
         return np.stack([left, right, top, bottom])
 
+    def _active_obstacles_xy(
+        self, obs: dict[str, NDArray[np.floating]], horizon_xy: NDArray[np.floating]
+    ) -> NDArray[np.floating]:
+        """Return (N_OBSTACLES, 2): obstacles within ``ACTIVE_OBS_RADIUS`` of horizon, rest parked.
+
+        Parked at 100 m so the squared-distance soft constraint is trivially
+        inactive without HPIPM Hessian overflow (1e6 caused status 3 each step).
+        Adaptive filter — robust to randomization that may shift obstacles into
+        or out of the static SarNi-style per-leg list.
+        """
+        all_xy = np.asarray(obs["obstacles_pos"], dtype=np.float64)[: self.N_OBSTACLES, :2]
+        out = np.full((self.N_OBSTACLES, 2), 100.0, dtype=np.float64)
+        for k, oxy in enumerate(all_xy):
+            d = np.linalg.norm(horizon_xy - oxy[None, :], axis=1)
+            if float(d.min()) < self.ACTIVE_OBS_RADIUS:
+                out[k] = oxy
+        return out
+
     # ---- controller API ---------------------------------------------------
 
     def compute_control(
@@ -328,16 +368,28 @@ class GateAwareFastV3(Controller):
             self._finished = True
         i = min(self._tick, self._plan_spline_ticks + self.PLAN_PAD - self.N - 2)
 
+        # Always-on PD+I path: keep integrator warm, skip MPC solve.
+        if not self.USE_MPC:
+            ref_pos = self._pos_samples[i]
+            self._pdi_i_err = np.clip(
+                self._pdi_i_err
+                + (ref_pos - np.asarray(obs["pos"], dtype=np.float64)) * self._dt,
+                -self.PDI_I_CLAMP,
+                self.PDI_I_CLAMP,
+            )
+            return self._pdi_track(obs, i)
+
         rpy = R.from_quat(obs["quat"]).as_euler("xyz")
         drpy = ang_vel2rpy_rates(obs["quat"], obs["ang_vel"])
         x0 = np.concatenate((obs["pos"], rpy, obs["vel"], drpy))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
 
-        # Build parameter vector: [obstacles_xy (flat), wings_xyz (flat)].
-        obs_xy = np.asarray(obs["obstacles_pos"])[: self.N_OBSTACLES, :2].flatten()
-        if obs_xy.size < 2 * self.N_OBSTACLES:
-            obs_xy = np.concatenate([obs_xy, np.full(2 * self.N_OBSTACLES - obs_xy.size, 1e6)])
+        # Adaptive obstacle filter: only obstacles near the MPC horizon are
+        # active; rest parked at 100 m so soft constraint is inactive. Cuts
+        # active soft constraints, easing QP conditioning.
+        horizon_xy = self._pos_samples[i : i + self.N + 1, :2]
+        obs_xy = self._active_obstacles_xy(obs, horizon_xy).flatten()
         wings_xyz = self._current_gate_wings(obs).flatten()
         param_vec = np.concatenate([obs_xy, wings_xyz])
         for j in range(self.N + 1):
@@ -356,9 +408,62 @@ class GateAwareFastV3(Controller):
         yref_e[6:9] = self._vel_samples[i + self.N]
         self._acados_ocp_solver.set(self.N, "y_ref", yref_e)
 
-        self._acados_ocp_solver.solve()
+        status = self._acados_ocp_solver.solve()
+        # Always advance the PD+I integrator on the live tracking error so the
+        # fallback engages with a warm integrator (no transient lag) when QP
+        # bails out mid-flight.
+        ref_pos = self._pos_samples[i]
+        self._pdi_i_err = np.clip(
+            self._pdi_i_err + (ref_pos - np.asarray(obs["pos"], dtype=np.float64)) * self._dt,
+            -self.PDI_I_CLAMP,
+            self.PDI_I_CLAMP,
+        )
+        # PD+I fallback: when QP solver reports an error (typ. status 3 =
+        # ill-conditioned QP), the MPC's first-step input may be garbage. Drop
+        # to closed-form geometric tracking on the same plan reference. Status
+        # 0 (success) and 2 (max_iter, but iterates are usually usable) keep
+        # the MPC output. SarNi-style PD + accel feedforward.
+        if status not in (0, 2):
+            return self._pdi_track(obs, i)
         u0 = self._acados_ocp_solver.get(0, "u")
         return np.asarray(u0, dtype=np.float32)
+
+    def _pdi_track(
+        self, obs: dict[str, NDArray[np.floating]], i: int
+    ) -> NDArray[np.floating]:
+        """Closed-form attitude command tracking the plan's i-th sample.
+
+        Integrator (``self._pdi_i_err``) is updated upstream on every tick so
+        this method just reads the warm value — fallback engages without lag.
+        """
+        ref_pos = self._pos_samples[i]
+        ref_vel = self._vel_samples[i]
+        ref_acc = self._acc_samples[i].copy()
+        acc_norm = float(np.linalg.norm(ref_acc))
+        if acc_norm > self.PDI_ACC_CAP:
+            ref_acc *= self.PDI_ACC_CAP / acc_norm
+        pos = np.asarray(obs["pos"], dtype=np.float64)
+        vel = np.asarray(obs["vel"], dtype=np.float64)
+        e_pos = ref_pos - pos
+        e_vel = ref_vel - vel
+        m = float(self.drone_params["mass"])
+        g = float(-self.drone_params["gravity_vec"][-1])
+        thrust_vec = (
+            self.PDI_KP * e_pos
+            + self.PDI_KI * self._pdi_i_err
+            + self.PDI_KD * e_vel
+            + self.PDI_FF_SCALE * m * ref_acc
+        )
+        thrust_vec[2] += m * g
+        z_body = R.from_quat(obs["quat"]).as_matrix()[:, 2]
+        thrust_cmd = float(thrust_vec @ z_body)
+        z_des = thrust_vec / (np.linalg.norm(thrust_vec) + 1e-6)
+        y_des = np.cross(z_des, np.array([1.0, 0.0, 0.0]))
+        y_des /= np.linalg.norm(y_des) + 1e-6
+        x_des = np.cross(y_des, z_des)
+        r_des = np.column_stack([x_des, y_des, z_des])
+        attitude = R.from_matrix(r_des).as_euler("xyz", degrees=False)
+        return np.array([*attitude, thrust_cmd], dtype=np.float32)
 
     def step_callback(
         self,
@@ -409,7 +514,16 @@ class GateAwareFastV3(Controller):
             and self._flight_tick > 0
             and self._flight_tick % self.REPLAN_PERIOD_TICKS == 0
         )
-        if new_gate or new_obstacle or periodic_replan:
+        # Tracking-error-based replan: if drone has drifted far from current
+        # reference, the existing plan is stale — refresh from current state
+        # so MPC sees a sane horizon. Skip for first 5 ticks (lift-off transient).
+        track_err_replan = False
+        if self.REPLAN_TRACK_ERR > 0 and self._tick > 5 and not disabled_warped:
+            i = min(self._tick, self._plan_spline_ticks + self.PLAN_PAD - self.N - 2)
+            ref_pos = self._pos_samples[i]
+            if float(np.linalg.norm(pos_now - ref_pos)) > self.REPLAN_TRACK_ERR:
+                track_err_replan = True
+        if new_gate or new_obstacle or periodic_replan or track_err_replan:
             self._replan(obs, start_vel=np.asarray(obs["vel"]), target_gate=target_gate)
         self._prev_gates_visited = gates_visited.copy()
         self._prev_obstacles_visited = obstacles_visited.copy()
@@ -423,6 +537,7 @@ class GateAwareFastV3(Controller):
         self._flight_tick = 0
         self._terminal_state = None
         self._last_live_state = None
+        self._pdi_i_err[:] = 0.0
 
     def _write_diagnostic(self, ts: dict) -> None:
         pos = ts.get("pos", np.zeros(3))
