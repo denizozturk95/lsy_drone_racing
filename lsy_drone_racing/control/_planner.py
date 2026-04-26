@@ -202,10 +202,10 @@ def _exited_gate_clearance(
     clearance_xy = (prev_gp + (prev_d_post + 0.60) * prev_x_axis)[:2]
     if float(next_gp[2]) > float(prev_gp[2]):
         z_c = max(float(prev_gp[2]) + 0.55, float(next_gp[2]) - 0.05)
-        z_apex = float(next_gp[2]) - 0.05
-    else:
-        z_c = min(float(prev_gp[2]) - 0.30, float(next_gp[2]) + 0.15)
         z_apex = float(next_gp[2]) + 0.05
+    else:
+        z_c = min(float(prev_gp[2]) - 0.55, float(next_gp[2]) + 0.05)
+        z_apex = float(next_gp[2]) - 0.05
     clearance = np.array([clearance_xy[0], clearance_xy[1], z_c])
     mid_xy = 0.5 * (clearance_xy + next_approach[:2])
     away = mid_xy - prev_gp[:2]
