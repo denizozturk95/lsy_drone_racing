@@ -180,13 +180,13 @@ class GateAwareFastV3(Controller):
     PLANNER = PlannerConfig(
         d_pre=0.28,
         d_post=0.14,
-        v_cruise=2.72,
-        v_cruise_inter=5.10,
+        v_cruise=2.85,
+        v_cruise_inter=5.30,
         t_min_seg=0.19,
         r_obs=0.24,
-        d_post_per_gate=(0.14, 0.16, 0.20, 0.23),
-        d_pre_per_gate=(0.40, 0.28, 0.30, 0.28),
-        v_peri_per_gate=(2.10, 2.70, 2.70, 2.70),
+        d_post_per_gate=(0.13, 0.15, 0.17, 0.18),
+        d_pre_per_gate=(0.36, 0.32, 0.28, 0.26),
+        v_peri_per_gate=(2.30, 2.75, 2.80, 2.75),
     )
     RACING_LINE = RacingLineConfig(
         v_cruise=1.8, t_min_seg=0.15, max_accel=9.0, max_vel=4.0, r_obs=0.22
