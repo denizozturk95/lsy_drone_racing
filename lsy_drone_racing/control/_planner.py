@@ -278,7 +278,7 @@ def _build_waypoints(
                 if next_z > gp[2]:
                     z_c = max(gp[2] + 0.55, next_z - 0.05)
                 else:
-                    z_c = min(gp[2] - 0.55, next_z + 0.05)
+                    z_c = max(gp[2] - 0.55, next_z + 0.05)
                 clearance = np.array([clearance_xy[0], clearance_xy[1], z_c])
                 wps.append(clearance) 
                 next_approach_xy = next_approach_raw[:2]
@@ -288,9 +288,9 @@ def _build_waypoints(
                 if away_n > 1e-6:
                     mid_xy = mid_xy + (away / away_n) * 0.10
                 if next_z > gp[2]:
-                    z_apex = next_z + 0.05
-                else:
                     z_apex = next_z - 0.05
+                else:
+                    z_apex = next_z + 0.05
                 turn_apex = np.array([mid_xy[0], mid_xy[1], z_apex])
                 wps.append(turn_apex)
     last_x = R.from_quat(gates_quat[-1]).as_matrix()[:, 0]
