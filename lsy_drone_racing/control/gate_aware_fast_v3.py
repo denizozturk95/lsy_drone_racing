@@ -181,11 +181,11 @@ class GateAwareFastV3(Controller):
         d_pre=0.28,
         d_post=0.14,
         v_cruise=2.85,
-        v_cruise_inter=5.30,
+        v_cruise_inter=5.50,
         t_min_seg=0.19,
         r_obs=0.24,
         d_post_per_gate=(0.13, 0.15, 0.17, 0.18),
-        d_pre_per_gate=(0.36, 0.32, 0.28, 0.26),
+        d_pre_per_gate=(0.42, 0.32, 0.28, 0.26),
         v_peri_per_gate=(2.30, 2.75, 2.80, 2.75),
     )
     RACING_LINE = RacingLineConfig(
