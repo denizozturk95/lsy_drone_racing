@@ -202,10 +202,10 @@ def _exited_gate_clearance(
     clearance_xy = (prev_gp + (prev_d_post + 0.60) * prev_x_axis)[:2]
     if float(next_gp[2]) > float(prev_gp[2]):
         z_c = max(float(prev_gp[2]) + 0.55, float(next_gp[2]) - 0.05)
-        z_apex = float(next_gp[2]) + 0.05
-    else:
-        z_c = min(float(prev_gp[2]) - 0.55, float(next_gp[2]) + 0.05)
         z_apex = float(next_gp[2]) - 0.05
+    else:
+        z_c = max(float(prev_gp[2]) - 0.30, float(next_gp[2]) + 0.15)
+        z_apex = float(next_gp[2]) + 0.05
     clearance = np.array([clearance_xy[0], clearance_xy[1], z_c])
     mid_xy = 0.5 * (clearance_xy + next_approach[:2])
     away = mid_xy - prev_gp[:2]
@@ -224,13 +224,13 @@ def _build_waypoints(
     cfg: PlannerConfig,
     target_gate: int = 0,
 ) -> NDArray[np.floating]:
-    wps: list[NDArray[np.floating]] = [start_pos.copy()] 
+    wps: list[NDArray[np.floating]] = [start_pos.copy()]
     if start_pos[2] < 0.15 and len(gates_pos) > 0:
         first_gate_z = float(gates_pos[0][2])
-        target_z = max(0.4, 0.5 * first_gate_z)
+        target_z = max(0.55, 0.85 * first_gate_z)
         toward_first = gates_pos[0][:2] - start_pos[:2]
         n = float(np.linalg.norm(toward_first))
-        offset_xy = (toward_first / n * 0.15) if n > 1e-6 else np.zeros(2)
+        offset_xy = (toward_first / n * 0.40) if n > 1e-6 else np.zeros(2)
         liftoff = np.array([start_pos[0] + offset_xy[0], start_pos[1] + offset_xy[1], target_z])
         wps.append(liftoff)
     n_gates = len(gates_pos)
@@ -274,13 +274,15 @@ def _build_waypoints(
             next_approach_raw = next_gp - next_d_pre * next_x_axis
             next_z = float(next_approach_raw[2])
             if abs(next_z - gp[2]) > 0.15:
-                clearance_xy = (gp + (d_post_gi + 0.60) * x_axis)[:2] 
+                clearance_xy = (gp + (d_post_gi + 0.60) * x_axis)[:2]
                 if next_z > gp[2]:
                     z_c = max(gp[2] + 0.55, next_z - 0.05)
                 else:
-                    z_c = max(gp[2] - 0.55, next_z + 0.05)
+                    # Going down: keep clearance ABOVE next gate so cubic spline
+                    # doesn't undershoot below it on the way in.
+                    z_c = max(gp[2] - 0.30, next_z + 0.15)
                 clearance = np.array([clearance_xy[0], clearance_xy[1], z_c])
-                wps.append(clearance) 
+                wps.append(clearance)
                 next_approach_xy = next_approach_raw[:2]
                 mid_xy = 0.5 * (clearance_xy + next_approach_xy)
                 away = mid_xy - gp[:2]
@@ -486,7 +488,12 @@ def _build_spline(
             v = cfg.v_peri_for(peri_gi)
         else:
             v = v_inter
-        seg_t[i] = max(seg_len[i] / v, cfg.t_min_seg) 
+        seg_t[i] = max(seg_len[i] / v, cfg.t_min_seg)
+        # Cold-start segments (i==0 with zero start_vel) need extra runway:
+        # spline accel from 0 → v_inter over a short t_min_seg exceeds the
+        # drone's horizontal authority. Floor the first segment higher.
+        if float(np.linalg.norm(start_vel)) < 0.3 and i < 2:
+            seg_t[i] = max(seg_t[i], 0.22)
     if len(obstacles_pos) > 0:
         slow_radius = 0.32
         for i in range(len(waypoints) - 1):
