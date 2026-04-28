@@ -10,7 +10,7 @@ import numpy as np
 import scipy
 from acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
 from drone_models.core import load_params
-from drone_models.so_rpy import symbolic_dynamics_euler
+from drone_models.so_rpy_rotor import symbolic_dynamics_euler
 from drone_models.utils.rotation import ang_vel2rpy_rates
 from scipy.spatial.transform import Rotation as R
 
@@ -48,6 +48,7 @@ def _build_ocp(
         gravity_vec=parameters["gravity_vec"],
         J=parameters["J"],
         J_inv=parameters["J_inv"],
+        thrust_time_coef=parameters["thrust_time_coef"],
         acc_coef=parameters["acc_coef"],
         cmd_f_coef=parameters["cmd_f_coef"],
         rpy_coef=parameters["rpy_coef"],
@@ -78,7 +79,10 @@ def _build_ocp(
     # Tuned for cf21B_500 (m≈43g, T/W≈1.9). xy weights 75 (vs base 50) for
     # tighter lateral tracking through the 0.4 m gate openings; vel weights
     # 12 (vs 10) for smoother approaches.
-    Q = np.diag([75.0, 75.0, 400.0, 1.0, 1.0, 1.0, 12.0, 12.0, 12.0, 5.0, 5.0, 5.0])
+    q_diag = [75.0, 75.0, 400.0, 1.0, 1.0, 1.0, 12.0, 12.0, 12.0, 5.0, 5.0, 5.0]
+    if nx > 12:
+        q_diag.extend([0.0] * (nx - 12))
+    Q = np.diag(q_diag)
     Rcost = np.diag([1.0, 1.0, 1.0, 50.0])
     Q_e = Q.copy()
 
@@ -181,11 +185,11 @@ class GateAwareFastV3(Controller):
         d_pre=0.28,
         d_post=0.14,
         v_cruise=2.85,
-        v_cruise_inter=5.50,
-        t_min_seg=0.17,
+        v_cruise_inter=5.30,
+        t_min_seg=0.16,
         r_obs=0.24,
         d_post_per_gate=(0.13, 0.15, 0.17, 0.18),
-        d_pre_per_gate=(0.42, 0.32, 0.28, 0.26),
+        d_pre_per_gate=(0.50, 0.32, 0.28, 0.26),
         v_peri_per_gate=(2.30, 2.75, 2.80, 2.75),
     )
     RACING_LINE = RacingLineConfig(
@@ -198,7 +202,7 @@ class GateAwareFastV3(Controller):
         self._dt = 1.0 / config.env.freq
         self._T_HORIZON = self.N * self._dt
 
-        self.drone_params = load_params("so_rpy", config.sim.drone_model)
+        self.drone_params = load_params("so_rpy_rotor", config.sim.drone_model)
         self._acados_ocp_solver, self._ocp = _build_ocp(
             self._T_HORIZON,
             self.N,
@@ -326,6 +330,11 @@ class GateAwareFastV3(Controller):
         rpy = R.from_quat(obs["quat"]).as_euler("xyz")
         drpy = ang_vel2rpy_rates(obs["quat"], obs["ang_vel"])
         x0 = np.concatenate((obs["pos"], rpy, obs["vel"], drpy))
+        if self._nx > 12:
+            hover_per = float(self.drone_params["mass"]) * float(
+                -self.drone_params["gravity_vec"][-1]
+            ) / max(self._nx - 12, 1)
+            x0 = np.concatenate((x0, np.full(self._nx - 12, hover_per)))
         self._acados_ocp_solver.set(0, "lbx", x0)
         self._acados_ocp_solver.set(0, "ubx", x0)
         horizon_xy = self._pos_samples[i : i + self.N + 1, :2]
