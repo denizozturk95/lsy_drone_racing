@@ -1,4 +1,4 @@
-"""generic track-agnostic parameters for the controller."""
+"""Generic, track-agnostic parameters for the online_planner controller."""
 # ruff: noqa: TC002
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ Array3 = NDArray[np.float64]
 
 @dataclass(frozen=True)
 class PlannerSettings:
-    """observation-driven spline planning settings."""
+    """Observation-driven spline planning settings (no track-specific constants)."""
 
     d_pre: float = 0.40
     d_post: float = 0.30
@@ -28,11 +28,17 @@ class PlannerSettings:
     cold_start_min_seg: float = 0.45
     peri_gate_radius: float = 0.55
     clearance_height_delta: float = 0.15
+    # When True (default, Level-2 behavior) gate forward axes are flipped to match the
+    # drone's travel direction. When False the gate's canonical +x axis is used as the
+    # crossing direction — required for Level 3, where the env only counts a gate as
+    # passed when crossed from gate-local -x to +x (see envs/utils.py:gate_passed) and
+    # the randomizer orients every gate's +x along the intended traversal direction.
+    orient_gates_to_travel: bool = True
 
 
 @dataclass(frozen=True)
 class FeedbackProfile:
-    """gains resolved into the cascaded controller."""
+    """Legacy-style gains resolved into the cascaded controller."""
 
     kp: Array3
     ki: Array3
@@ -42,7 +48,7 @@ class FeedbackProfile:
 
 @dataclass(frozen=True)
 class FeedbackSettings:
-    """pid limits and a single resolved gain profile."""
+    """PID limits and a single resolved gain profile."""
 
     outer_clamp: Array3 = field(
         default_factory=lambda: np.array([2.4, 2.35, 1.8], dtype=np.float64)
@@ -69,7 +75,7 @@ class FeedbackSettings:
 
 @dataclass(frozen=True)
 class CommandSettings:
-    """feedforward attitude and final action limits."""
+    """Feedforward, attitude, and final action limits."""
 
     lateral_accel_limit: float = 8.0
     feedforward_scale: float = 0.6
@@ -82,7 +88,7 @@ class CommandSettings:
 
 @dataclass(frozen=True)
 class RuntimeSettings:
-    """episode timing and replanning policy."""
+    """Episode timing and replanning policy."""
 
     timeout_s: float = 30.0
     gravity: float = 9.81
@@ -94,7 +100,7 @@ class RuntimeSettings:
 
 @dataclass(frozen=True)
 class ControllerSettings:
-    """all configurable values used by the controller."""
+    """All configurable values used by the controller."""
 
     planner: PlannerSettings = field(default_factory=PlannerSettings)
     feedback: FeedbackSettings = field(default_factory=FeedbackSettings)

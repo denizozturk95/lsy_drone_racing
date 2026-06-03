@@ -1,4 +1,9 @@
-"""observation-driven reference planning."""
+"""Generic, observation-driven reference planning for online_planner.
+
+The path is derived entirely from the observed gate and obstacle poses: a clamped
+cubic spline is built through all remaining gates from the drone's current state and
+rebuilt (global replan) whenever the target gate advances or an observed pose shifts.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ ReferenceCurve = CubicSpline
 
 @dataclass(frozen=True)
 class ReferencePlan:
-    """a global plan through all remaining gates from a fixed start state."""
+    """A global plan through all remaining gates from a fixed start state."""
 
     curve: CubicSpline
     t_total: float
@@ -38,11 +43,20 @@ class ReferencePlan:
 
 
 def _oriented_forward(
-    quat: NDArray[np.float64], gate_pos: NDArray[np.float64], reference: NDArray[np.float64]
+    quat: NDArray[np.float64],
+    gate_pos: NDArray[np.float64],
+    reference: NDArray[np.float64],
+    flip_to_travel: bool = True,
 ) -> NDArray[np.float64]:
-    """return the gate forward axis flipped to point along the travel direction."""
+    """Return the gate forward axis.
+
+    When ``flip_to_travel`` is True (default) the axis is flipped to point along the travel
+    direction (from ``reference`` toward the gate). When False the gate's canonical +x axis
+    is returned unchanged, which is the direction the environment requires the gate to be
+    crossed in (gate-local -x -> +x).
+    """
     forward = Rotation.from_quat(quat).as_matrix()[:, 0]
-    if float(np.dot(forward, gate_pos - reference)) < 0.0:
+    if flip_to_travel and float(np.dot(forward, gate_pos - reference)) < 0.0:
         forward = -forward
     return forward
 
@@ -54,7 +68,11 @@ def _clearance_points(
     next_forward: NDArray[np.float64],
     settings: PlannerSettings,
 ) -> list[NDArray[np.float64]]:
-    """return a clearance and turn-apex waypoint when the next gate height differs."""
+    """Return a clearance + turn-apex waypoint when the next gate height differs.
+
+    ``next_forward`` must be the same travel-oriented axis the main loop uses for the
+    next gate, so the turn-apex lands on the side the drone actually enters from.
+    """
     next_approach = next_pos - settings.d_pre * next_forward
     next_z = float(next_approach[2])
     prev_z = float(prev_pos[2])
@@ -64,9 +82,13 @@ def _clearance_points(
     pf = prev_forward[:2]
     denom = float(np.linalg.norm(pf) * np.linalg.norm(to_next))
     cos_to_next = float(np.dot(pf, to_next)) / denom if denom > 1e-9 else 1.0
+    # Only a clear reversal (next gate well behind the exit direction) gets the wide U-turn
+    # swing; marginal ~90 deg turns keep the forward clearance, which is robust to the gate
+    # reveal flipping the sign of a near-perpendicular dot product.
     if cos_to_next < -0.3:
         exit_xy = (prev_pos + settings.d_post * prev_forward)[:2]
         return reversal_turn(exit_xy, prev_pos, prev_forward, next_approach, to_next, settings)
+    # Forward turn: extend the clearance past the gate for a straight, climbing run-in.
     clearance_xy = (prev_pos + (settings.d_post + 0.60) * prev_forward)[:2]
     if next_z > prev_z:
         clearance_z = max(prev_z + 0.55, next_z - 0.05)
@@ -94,20 +116,28 @@ def _insert_exited_clearance(
     target_gate: int,
     settings: PlannerSettings,
 ) -> None:
-    """re-create the post-gate arc when replanning near the just-exited gate."""
+    """Re-create the post-gate arc when replanning near the just-exited gate.
+
+    The arc extends along the drone's actual exit momentum so the clamped spline
+    continues the current motion instead of reversing into the just-passed gate.
+    """
     prev_pos = gates_pos[target_gate - 1]
     if float(np.linalg.norm(start_pos - prev_pos)) >= 0.6:
         return
     prev_forward = Rotation.from_quat(gates_quat[target_gate - 1]).as_matrix()[:, 0]
-    travel = np.array([start_vel[0], start_vel[1], 0.0])
-    if float(np.linalg.norm(travel)) > 0.1:
-        reference = float(np.dot(prev_forward, travel))
-    else:
-        reference = float(np.dot(prev_forward, gates_pos[target_gate] - prev_pos))
-    if reference < 0.0:
-        prev_forward = -prev_forward
+    if settings.orient_gates_to_travel:
+        travel = np.array([start_vel[0], start_vel[1], 0.0])
+        if float(np.linalg.norm(travel)) > 0.1:
+            reference = float(np.dot(prev_forward, travel))
+        else:
+            reference = float(np.dot(prev_forward, gates_pos[target_gate] - prev_pos))
+        if reference < 0.0:
+            prev_forward = -prev_forward
+    # else: keep the previous gate's canonical +x axis (the drone exits on that side).
     prev_exit = prev_pos + settings.d_post * prev_forward
-    next_forward = _oriented_forward(gates_quat[target_gate], gates_pos[target_gate], prev_exit)
+    next_forward = _oriented_forward(
+        gates_quat[target_gate], gates_pos[target_gate], prev_exit, settings.orient_gates_to_travel
+    )
     points = _clearance_points(
         prev_pos, prev_forward, gates_pos[target_gate], next_forward, settings
     )
@@ -124,7 +154,7 @@ def build_waypoints(
     target_gate: int,
     settings: PlannerSettings,
 ) -> NDArray[np.float64]:
-    """build an obstacle-aware waypoint chain through the remaining gates."""
+    """Build an obstacle-aware waypoint chain through gates ``[target_gate:]``."""
     start_pos = np.asarray(start_pos, dtype=np.float64)
     start_vel = np.asarray(start_vel, dtype=np.float64)
     gates_pos = np.asarray(gates_pos, dtype=np.float64)
@@ -146,11 +176,16 @@ def build_waypoints(
         )
 
     n_gates = len(remaining_pos)
+    # Precompute travel-oriented forward axes for every remaining gate. Each gate is
+    # oriented relative to the *previous gate's exit* (not the running waypoint chain), so
+    # the choice is stable and the clearance turn-apex agrees with the gate-entry side.
     forwards: list[NDArray[np.float64]] = []
     reference = waypoints[-1]
     for index in range(n_gates):
         gate_pos = remaining_pos[index]
-        fwd = _oriented_forward(remaining_quat[index], gate_pos, reference)
+        fwd = _oriented_forward(
+            remaining_quat[index], gate_pos, reference, settings.orient_gates_to_travel
+        )
         forwards.append(fwd)
         reference = gate_pos + settings.d_post * fwd
     gate_indices: set[int] = set()
@@ -167,6 +202,8 @@ def build_waypoints(
         exit_point = nudge_lateral(exit_raw, lateral, obstacles_pos, settings.r_obs)
         far_raw = gate_pos - (settings.d_pre + 0.30) * forward
         far_approach = nudge_lateral(far_raw, lateral, obstacles_pos, settings.r_obs, bias_sign)
+        # Only insert the straight run-in if the previous waypoint is genuinely behind it
+        # along the travel axis; otherwise the spline jogs backward (cusp before the gate).
         behind = float(np.dot(previous - far_approach, forward)) < 0.0
         if behind and float(np.linalg.norm((far_approach - previous)[:2])) > 0.20:
             waypoints.append(far_approach)
@@ -187,12 +224,12 @@ def build_waypoints(
 
 
 class ReferenceManager:
-    """build and globally replan the reference spline from observed poses."""
+    """Build and globally replan the reference spline from observed poses."""
 
     def __init__(
         self, settings: PlannerSettings, replan_gate_delta_m: float, replan_obstacle_delta_m: float
     ):
-        """create a manager with the pose-change replanning thresholds."""
+        """Create a manager with the documented pose-change replanning thresholds."""
         self._settings = settings
         self._gate_delta = float(replan_gate_delta_m)
         self._obstacle_delta = float(replan_obstacle_delta_m)
@@ -200,11 +237,11 @@ class ReferenceManager:
 
     @property
     def plan(self) -> ReferencePlan | None:
-        """the active plan if one exists."""
+        """The active plan, if one exists."""
         return self._plan
 
     def reset(self) -> None:
-        """forget the cached plan."""
+        """Forget the cached plan."""
         self._plan = None
 
     def build(
@@ -213,7 +250,7 @@ class ReferenceManager:
         start_vel: NDArray[np.float64],
         frame: DroneObservation,
     ) -> ReferencePlan:
-        """build a global plan from a fixed start state through all remaining gates."""
+        """Build a global plan from a fixed start state through all remaining gates."""
         waypoints = build_waypoints(
             start_pos,
             start_vel,
@@ -236,7 +273,7 @@ class ReferenceManager:
         )
 
     def ensure_plan(self, frame: DroneObservation) -> tuple[ReferencePlan, bool]:
-        """return the active plan and whether it was rebuilt this call."""
+        """Return the active plan and whether it was rebuilt this call."""
         if self._needs_plan(frame):
             self._plan = self.build(frame.pos, frame.vel, frame)
             return self._plan, True
