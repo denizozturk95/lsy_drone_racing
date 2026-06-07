@@ -1,9 +1,24 @@
-"""Known-track navigate controller: trust the observation, no search.
+"""Known-track navigate controller (v7): no search, early climb, speed-tuned on deploy config.
 
-GateSearchV3 is the no-search sibling of :class:`~lsy_drone_racing.control.gate_search_v2`.
-It assumes the gate (and obstacle) positions are *known from the first step* and plans a
-single global spline through all of them straight away — no TAKEOFF climb, no Archimedean
-spiral SEARCH phase.
+GateSearchV7 is GateSearchV5's structure with speeds re-tuned by an offline grid search
+against the deployment-faithful scenario (``config/level2_deploy.toml`` — no gate/obstacle
+placement perturbation, the real ``save_track_as_config`` + ``deploy.py`` flow). The search
+optimised for *fastest run that still finishes 100%* over 20 randomized-start runs and found:
+
+* ``v_cruise = 1.4`` (peri-gate, raised from v5's 1.0) — the dominant gain,
+* ``v_cruise_inter = 1.6`` (was 1.5),
+* ``max_speed = 1.9`` (lowered from 2.0 — higher caps gained no time but cost reliability),
+* ``lookahead = 0.20`` (unchanged).
+
+Measured (deployment-faithful, 20 runs): **20/20 @ 10.65 s**, vs v5's 12.69 s (~16% faster).
+The through-gate cruise, not the peak cap, was the lever: the reactive planner spends most of
+its time in peri-gate zones, so raising that speed (while the planner still slows for the
+actual turn/obstacle geometry) is what pays off. Breaking below ~10.6 s needs either the v6
+offline-optimized trajectory or learned feedforward (ILC) to fix the tracking bottleneck.
+
+Like GateSearchV5 it assumes the gate (and obstacle) positions are *known from the first step*
+and plans a single global spline through all of them straight away — no TAKEOFF climb, no
+Archimedean spiral SEARCH phase.
 
 When is that true?
 ------------------
@@ -74,10 +89,13 @@ if TYPE_CHECKING:
 _NAV_D_PRE = 0.60
 _NAV_D_POST = 0.40
 _NAV_R_OBS = 0.20
-# Speeds (m/s). Peri-gate cruise is kept modest for crossing precision; tune up for speed.
-_V_CRUISE = 1.0          # cruise speed near gates
-_V_CRUISE_INTER = 1.0    # cruise speed between gates
-_VMAX = 1.4              # peak-velocity cap
+# Speeds (m/s). Tuned by offline grid search on config/level2_deploy.toml for fastest-at-100%
+# (20 runs). The through-gate (peri-gate) cruise was the dominant lever: 1.4 here vs v5's 1.0
+# cut the lap 12.69 -> 10.65 s. max_speed 1.9 (down from 2.0): higher caps gave no extra time
+# but cost reliability. The planner still slows for the real turn/obstacle geometry on its own.
+_V_CRUISE = 1.4          # cruise speed near gates (peri-gate)
+_V_CRUISE_INTER = 1.6    # cruise speed between gates
+_VMAX = 1.9              # peak-velocity cap
 # Reference look-ahead (s). Smaller => track the spline point nearer current progress,
 # reducing corner-cutting (and the body tilt that clips a rotor on the gate frame).
 _NAV_LOOKAHEAD = 0.20
@@ -86,8 +104,8 @@ _NAV_LOOKAHEAD = 0.20
 _GATE_POST_OFFSET = 0.30
 
 
-class GateSearchV3(Controller):
-    """No-search navigate controller for known tracks (level0/1/2 or a saved real track)."""
+class GateSearchV7(Controller):
+    """No-search navigate + early climb + deploy-tuned speeds (known tracks)."""
 
     _MODE_NAVIGATE = "NAVIGATE"
     _MODE_HOME = "HOME"
@@ -97,14 +115,15 @@ class GateSearchV3(Controller):
         """Initialise timing, drone parameters, PID, and the reference manager."""
         super().__init__(obs, info, config)
         if config.env.control_mode != "attitude":
-            raise ValueError("GateSearchV3 requires env.control_mode = 'attitude'.")
+            raise ValueError("GateSearchV7 requires env.control_mode = 'attitude'.")
         # orient_gates_to_travel=False: cross every gate along its canonical +x axis, the
         # direction the env requires for a counted pass (gate-local -x -> +x).
+        # early_climb=True: reach tall-gate height early so the run-in is level (v4 fix).
         self._settings = ControllerSettings(
             planner=PlannerSettings(
                 d_pre=_NAV_D_PRE, d_post=_NAV_D_POST, v_cruise=_V_CRUISE,
                 v_cruise_inter=_V_CRUISE_INTER, max_speed=_VMAX,
-                r_obs=_NAV_R_OBS, orient_gates_to_travel=False,
+                r_obs=_NAV_R_OBS, orient_gates_to_travel=False, early_climb=True,
             ),
             runtime=RuntimeSettings(lookahead_s=_NAV_LOOKAHEAD),
         )

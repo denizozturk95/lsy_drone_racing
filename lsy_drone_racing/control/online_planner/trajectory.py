@@ -85,14 +85,23 @@ def _clearance_points(
     # Only a clear reversal (next gate well behind the exit direction) gets the wide U-turn
     # swing; marginal ~90 deg turns keep the forward clearance, which is robust to the gate
     # reveal flipping the sign of a near-perpendicular dot product.
+    upward = next_z > prev_z
     if cos_to_next < -0.3:
         exit_xy = (prev_pos + settings.d_post * prev_forward)[:2]
-        return reversal_turn(exit_xy, prev_pos, prev_forward, next_approach, to_next, settings)
+        points = reversal_turn(exit_xy, prev_pos, prev_forward, next_approach, to_next, settings)
+        if settings.early_climb and upward:
+            # Climb to the full next-gate height through the U-turn so the drone enters a
+            # tall gate level rather than mid-climb.
+            points = [np.array([p[0], p[1], max(float(p[2]), next_z)]) for p in points]
+        return points
     # Forward turn: extend the clearance past the gate for a straight, climbing run-in.
     clearance_xy = (prev_pos + (settings.d_post + 0.60) * prev_forward)[:2]
-    if next_z > prev_z:
-        clearance_z = max(prev_z + 0.55, next_z - 0.05)
-        apex_z = next_z - 0.05
+    if upward:
+        # early_climb: reach the full gate height at the clearance + apex waypoints (early),
+        # so the run-in is level. Default: top out ~0.05 m below and finish the climb late.
+        top = next_z if settings.early_climb else next_z - 0.05
+        clearance_z = max(prev_z + 0.55, top)
+        apex_z = top
     else:
         clearance_z = max(prev_z - 0.30, next_z + 0.15)
         apex_z = next_z + 0.05

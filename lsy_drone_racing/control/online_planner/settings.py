@@ -34,6 +34,12 @@ class PlannerSettings:
     # passed when crossed from gate-local -x to +x (see envs/utils.py:gate_passed) and
     # the randomizer orients every gate's +x along the intended traversal direction.
     orient_gates_to_travel: bool = True
+    # When True, an upward gate-to-gate transition climbs to the *full* next-gate height at the
+    # clearance/turn-apex waypoints (instead of topping out ~0.05 m below it), so the drone
+    # reaches tall-gate height early and flies level into the run-in rather than clipping the
+    # bottom frame bar on a late climb. Default False keeps the original Level-2/3 behavior
+    # (GateSearchV4+ opt in; GateSearchV2/V3 unaffected).
+    early_climb: bool = False
 
 
 @dataclass(frozen=True)

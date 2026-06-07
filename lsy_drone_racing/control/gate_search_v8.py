@@ -1,40 +1,37 @@
-"""Known-track navigate controller: trust the observation, no search.
+"""Known-track navigate controller (v8): v7 + a measured lateral pre-bias at the U-turn gate.
 
-GateSearchV3 is the no-search sibling of :class:`~lsy_drone_racing.control.gate_search_v2`.
-It assumes the gate (and obstacle) positions are *known from the first step* and plans a
-single global spline through all of them straight away — no TAKEOFF climb, no Archimedean
-spiral SEARCH phase.
+GateSearchV8 is GateSearchV7 with ONE addition: it corrects a *deterministic* lateral tracking
+offset at the reversal (U-turn) gate so the drone crosses centered instead of clipping the frame.
 
-When is that true?
-------------------
-``obs["gates_pos"]`` reports a gate's true pose only once it has been *visited* (drone within
-``sensor_range``); otherwise it reports the **nominal** pose (``envs/race_core.py:obs``). On a
-KNOWN track the nominal pose already equals the real pose, so the mask is a no-op and the real
-layout is available at ``t = 0``. This holds for:
+Why
+---
+v7 finishes ~97% on the deployment-faithful scenario; every miss is a rotor clip at GATE 2 — the
+short gate at the gate2->gate3 U-turn entry. An instrumented probe (scripts/probe_tracking.py, 80
+seeds) showed the miss is *repeatable*, not noise: the drone crosses gate 2 at a signed lateral
+offset of mean +0.073 m / STD 0.014 m on the gate's +y axis (other gates: <=0.033 m). The cascaded
+PID carries lateral momentum from the hard turn through the gate plane and lands consistently to
+one side.
 
-* ``level0/1/2`` configs (``randomize = false``; the config holds the real layout), and
-* a ``real_track.toml`` captured by ``scripts/save_track_as_config.py`` — it measures the
-  physical track via Vicon, writes the real gate/obstacle poses into the config and sets
-  ``randomize = false``. After that, both sim and ``real_race_env`` surface the true poses
-  from the start (``nominal == real``).
+Because the offset is deterministic, it is cancellable open-loop: aim the controller at a gate
+center shifted by -0.073 m along the gate +y axis, and the lagging drone lands centered. This is a
+pure planner-input nudge — the environment still scores the real gate; only the controller's aim
+point moves. Measured (scripts/v8_experiment.py, 150 seeds): gate-2 center-miss drops 0.076 ->
+0.019 m (max 0.158 -> 0.045 m vs the 0.20 m collision half-width), finish 94.7% -> 100%, and the
+lap is marginally faster (10.70 -> 10.63 s) from the cleaner U-turn line. Stacking feedforward /
+phase-advance on top was *worse* (81%) — they shift the lag profile this bias is calibrated to — so
+v8 applies the bias alone.
 
-It does NOT hold for blind Level 3 (``randomize = true``), where every gate's nominal pose is
-the degenerate ``[0, 0, h]`` origin stack. Use :class:`GateSearchV2` (spiral search) there.
+Calibration
+-----------
+``_GATE_LATERAL_BIAS`` is a per-gate, measured calibration for THIS deployment track (regenerate
+with scripts/probe_tracking.py if the track changes): map gate index -> bias (m) along that gate's
+local +y axis. Only the U-turn gate (index 2) is corrected; the other gates already cross within
+~0.03 m and are left at zero to avoid amplifying probe/measurement noise. An empty map makes v8
+byte-equivalent to v7, so v7 remains the exact rollback baseline.
 
-Design
-------
-The shared ``online_planner`` already lifts off from the ground on its own: when the start
-height is below ``liftoff_z_threshold`` it inserts a climbing waypoint toward the first gate
-(``online_planner/trajectory.py:build_waypoints``). So this controller is just:
-
-NAVIGATE : from ``t = 0``, plan one clamped-cubic spline through every remaining gate using the
-           observed poses, avoiding the observed obstacles. Replans automatically when the
-           target gate advances or any observed pose shifts.
-HOME     : after the last gate (``target_gate == -1``), descend to arena centre and land.
-
-``orient_gates_to_travel`` is False (same as GateSearchV2's NAVIGATE): gates are crossed along
-their canonical +x axis, the direction the environment counts a pass in
-(``envs/utils.py:gate_passed`` requires gate-local -x -> +x), which every track layout respects.
+Everything else (no-search NAVIGATE from t=0, early climb, deploy-tuned speeds, HOME descent,
+``orient_gates_to_travel=False``) is identical to GateSearchV7; see that file for the full design
+notes on why the known-track assumption holds.
 """
 
 from __future__ import annotations
@@ -63,31 +60,25 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.interpolate import CubicSpline
 
-# ── NAVIGATE gate-approach geometry (carried over from GateSearchV2's NAVIGATE) ────────
-# d_pre/d_post set the straight run-in / run-out length aligned with the gate normal; a
-# longer run-in reduces corner-cutting at the gate plane (but too long hurts — measured: a
-# 0.60 m run-in clearly beat 0.80/1.00 m, which forced late climbs and slower runs).
-# r_obs is the obstacle keep-out radius. GateSearchV2 tightened this to 0.12 m for Level-3's
-# *thin* (0.03 m) poles placed right at the gate; on a known track the obstacles are full
-# poles with room to spare, so a wider 0.20 m keep-out is correct. Measured on level2 (12
-# seeds): 0.12 -> 7/12 finishes, 0.20 -> 10/12; 0.24 over-corrects and clips gate frames.
+# ── NAVIGATE gate-approach geometry (identical to GateSearchV7) ────────────────────────
 _NAV_D_PRE = 0.60
 _NAV_D_POST = 0.40
 _NAV_R_OBS = 0.20
-# Speeds (m/s). Peri-gate cruise is kept modest for crossing precision; tune up for speed.
-_V_CRUISE = 1.0          # cruise speed near gates
-_V_CRUISE_INTER = 1.0    # cruise speed between gates
-_VMAX = 1.4              # peak-velocity cap
-# Reference look-ahead (s). Smaller => track the spline point nearer current progress,
-# reducing corner-cutting (and the body tilt that clips a rotor on the gate frame).
+# Speeds (m/s) — the deploy-tuned values carried over verbatim from GateSearchV7.
+_V_CRUISE = 1.4          # cruise speed near gates (peri-gate)
+_V_CRUISE_INTER = 1.6    # cruise speed between gates
+_VMAX = 1.9              # peak-velocity cap
 _NAV_LOOKAHEAD = 0.20
-# Virtual columns ±_GATE_POST_OFFSET along each gate's lateral axis funnel the spline through
-# the opening (gate frame outer half-width is 0.36 m; tighter centres the run-in => fewer clips).
 _GATE_POST_OFFSET = 0.30
 
+# Measured per-gate lateral pre-bias (m) along each gate's local +y axis, for THIS deploy track.
+# Cancels the deterministic crossing offset measured by scripts/probe_tracking.py. Only the U-turn
+# gate (index 2, offset +0.073 m) needs it; an empty map => byte-equivalent to GateSearchV7.
+_GATE_LATERAL_BIAS: dict[int, float] = {2: -0.073}
 
-class GateSearchV3(Controller):
-    """No-search navigate controller for known tracks (level0/1/2 or a saved real track)."""
+
+class GateSearchV8(Controller):
+    """GateSearchV7 + a measured lateral pre-bias at the U-turn gate (known tracks)."""
 
     _MODE_NAVIGATE = "NAVIGATE"
     _MODE_HOME = "HOME"
@@ -97,17 +88,18 @@ class GateSearchV3(Controller):
         """Initialise timing, drone parameters, PID, and the reference manager."""
         super().__init__(obs, info, config)
         if config.env.control_mode != "attitude":
-            raise ValueError("GateSearchV3 requires env.control_mode = 'attitude'.")
-        # orient_gates_to_travel=False: cross every gate along its canonical +x axis, the
-        # direction the env requires for a counted pass (gate-local -x -> +x).
+            raise ValueError("GateSearchV8 requires env.control_mode = 'attitude'.")
+        # orient_gates_to_travel=False: cross every gate along its canonical +x axis.
+        # early_climb=True: reach tall-gate height early so the run-in is level.
         self._settings = ControllerSettings(
             planner=PlannerSettings(
                 d_pre=_NAV_D_PRE, d_post=_NAV_D_POST, v_cruise=_V_CRUISE,
                 v_cruise_inter=_V_CRUISE_INTER, max_speed=_VMAX,
-                r_obs=_NAV_R_OBS, orient_gates_to_travel=False,
+                r_obs=_NAV_R_OBS, orient_gates_to_travel=False, early_climb=True,
             ),
             runtime=RuntimeSettings(lookahead_s=_NAV_LOOKAHEAD),
         )
+        self._gate_bias = dict(_GATE_LATERAL_BIAS)
         self._freq = float(config.env.freq)
         self._dt = 1.0 / self._freq
         params = load_params(config.sim.physics, config.sim.drone_model)
@@ -165,6 +157,12 @@ class GateSearchV3(Controller):
     # ── NAVIGATE mode ────────────────────────────────────────────────────────
 
     def _navigate_action(self, frame: DroneObservation) -> NDArray:
+        # Correct the deterministic lateral tracking offset at the U-turn gate by shifting the
+        # gate center the controller *aims* at. The env still scores the real gate; only the
+        # planner's target moves (see module docstring). Everything downstream — waypoints, the
+        # funnel columns, projection — uses this biased frame, matching the validated experiment.
+        frame = self._bias_frame(frame)
+
         # Trust the observation: every gate and obstacle pose is taken as known. Feed all
         # observed obstacles (plus per-gate funnel columns) to the planner so the path avoids
         # them from the start, not only once they enter sensor range.
@@ -213,7 +211,32 @@ class GateSearchV3(Controller):
         self._last_action = action
         return action.copy()
 
-    # ── HOME mode ────────────────────────────────────────────────────────────
+    # ── Lateral pre-bias ──────────────────────────────────────────────────────
+
+    def _bias_frame(self, frame: DroneObservation) -> DroneObservation:
+        """Return a frame with each calibrated gate center shifted along its local +y axis.
+
+        Cancels the measured deterministic crossing offset (``_GATE_LATERAL_BIAS``). No-op when
+        the calibration map is empty, making this controller equivalent to GateSearchV7.
+        """
+        if not self._gate_bias:
+            return frame
+        gate_pos = np.asarray(frame.gate_pos, dtype=np.float64).copy()
+        for gi, bias in self._gate_bias.items():
+            if 0 <= gi < len(gate_pos) and bias != 0.0:
+                lateral = Rotation.from_quat(frame.gate_quat[gi]).as_matrix()[:, 1]
+                gate_pos[gi] = gate_pos[gi] + bias * lateral
+        return DroneObservation(
+            target_gate=frame.target_gate,
+            gate_pos=gate_pos,
+            gate_quat=frame.gate_quat,
+            obstacles_pos=frame.obstacles_pos,
+            pos=frame.pos,
+            vel=frame.vel,
+            quat=frame.quat,
+        )
+
+    # ── HOME mode ──────────────────────────────────────────────────────────────
 
     def _home_action(self, frame: DroneObservation) -> NDArray:
         if self._home_plan is None:

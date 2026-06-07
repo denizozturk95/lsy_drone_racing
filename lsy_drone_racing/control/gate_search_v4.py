@@ -1,9 +1,14 @@
-"""Known-track navigate controller: trust the observation, no search.
+"""Known-track navigate controller (v4): no search, with early climb to tall gates.
 
-GateSearchV3 is the no-search sibling of :class:`~lsy_drone_racing.control.gate_search_v2`.
-It assumes the gate (and obstacle) positions are *known from the first step* and plans a
-single global spline through all of them straight away — no TAKEOFF climb, no Archimedean
-spiral SEARCH phase.
+GateSearchV4 extends GateSearchV3 (the no-search sibling of
+:class:`~lsy_drone_racing.control.gate_search_v2`) with one change: it sets
+``PlannerSettings.early_climb=True`` so an upward gate-to-gate transition reaches the full
+next-gate height *early* and flies level into the run-in, instead of finishing the climb late
+and clipping the bottom frame bar of a tall gate (the dominant remaining failure on v3).
+
+Like GateSearchV3 it assumes the gate (and obstacle) positions are *known from the first step*
+and plans a single global spline through all of them straight away — no TAKEOFF climb, no
+Archimedean spiral SEARCH phase.
 
 When is that true?
 ------------------
@@ -86,8 +91,8 @@ _NAV_LOOKAHEAD = 0.20
 _GATE_POST_OFFSET = 0.30
 
 
-class GateSearchV3(Controller):
-    """No-search navigate controller for known tracks (level0/1/2 or a saved real track)."""
+class GateSearchV4(Controller):
+    """No-search navigate controller + early climb for known tracks (level0/1/2 / saved track)."""
 
     _MODE_NAVIGATE = "NAVIGATE"
     _MODE_HOME = "HOME"
@@ -97,14 +102,15 @@ class GateSearchV3(Controller):
         """Initialise timing, drone parameters, PID, and the reference manager."""
         super().__init__(obs, info, config)
         if config.env.control_mode != "attitude":
-            raise ValueError("GateSearchV3 requires env.control_mode = 'attitude'.")
+            raise ValueError("GateSearchV4 requires env.control_mode = 'attitude'.")
         # orient_gates_to_travel=False: cross every gate along its canonical +x axis, the
         # direction the env requires for a counted pass (gate-local -x -> +x).
+        # early_climb=True: reach tall-gate height early so the run-in is level (v4 fix).
         self._settings = ControllerSettings(
             planner=PlannerSettings(
                 d_pre=_NAV_D_PRE, d_post=_NAV_D_POST, v_cruise=_V_CRUISE,
                 v_cruise_inter=_V_CRUISE_INTER, max_speed=_VMAX,
-                r_obs=_NAV_R_OBS, orient_gates_to_travel=False,
+                r_obs=_NAV_R_OBS, orient_gates_to_travel=False, early_climb=True,
             ),
             runtime=RuntimeSettings(lookahead_s=_NAV_LOOKAHEAD),
         )

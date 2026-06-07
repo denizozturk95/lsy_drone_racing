@@ -1,9 +1,16 @@
-"""Known-track navigate controller: trust the observation, no search.
+"""Known-track navigate controller (v5): no search, early climb, faster between gates.
 
-GateSearchV3 is the no-search sibling of :class:`~lsy_drone_racing.control.gate_search_v2`.
-It assumes the gate (and obstacle) positions are *known from the first step* and plans a
-single global spline through all of them straight away — no TAKEOFF climb, no Archimedean
-spiral SEARCH phase.
+GateSearchV5 extends GateSearchV4 (no-search + ``early_climb``) by raising the *inter-gate*
+cruise speed (1.0 -> 1.5 m/s) and peak cap (1.4 -> 2.0 m/s) while keeping the peri-gate cruise
+slow for crossing precision. Measured on level2 (12 seeds): same 10/12 finishes as v4 at
+~16.1 s vs 18.2 s (~12% faster). Pushing harder (inter>=2.0) does not reduce time further —
+the reactive clamped-cubic planner plateaus at ~16 s because turn/obstacle slowdowns and the
+peri-gate zones dominate — and it degrades reliability. Breaking that ceiling needs the v6
+offline-optimized trajectory.
+
+Like GateSearchV4 it assumes the gate (and obstacle) positions are *known from the first step*
+and plans a single global spline through all of them straight away — no TAKEOFF climb, no
+Archimedean spiral SEARCH phase.
 
 When is that true?
 ------------------
@@ -74,10 +81,12 @@ if TYPE_CHECKING:
 _NAV_D_PRE = 0.60
 _NAV_D_POST = 0.40
 _NAV_R_OBS = 0.20
-# Speeds (m/s). Peri-gate cruise is kept modest for crossing precision; tune up for speed.
-_V_CRUISE = 1.0          # cruise speed near gates
-_V_CRUISE_INTER = 1.0    # cruise speed between gates
-_VMAX = 1.4              # peak-velocity cap
+# Speeds (m/s). Peri-gate cruise stays slow for crossing precision; inter-gate is raised for
+# speed. Measured sweet spot on level2: inter=1.5/vmax=2.0 keeps 10/12 finishes at ~16.1 s;
+# inter>=2.0 gives no further time gain (planner plateaus) and loses reliability.
+_V_CRUISE = 1.0          # cruise speed near gates (peri-gate; keep low for precision)
+_V_CRUISE_INTER = 1.5    # cruise speed between gates
+_VMAX = 2.0              # peak-velocity cap
 # Reference look-ahead (s). Smaller => track the spline point nearer current progress,
 # reducing corner-cutting (and the body tilt that clips a rotor on the gate frame).
 _NAV_LOOKAHEAD = 0.20
@@ -86,8 +95,8 @@ _NAV_LOOKAHEAD = 0.20
 _GATE_POST_OFFSET = 0.30
 
 
-class GateSearchV3(Controller):
-    """No-search navigate controller for known tracks (level0/1/2 or a saved real track)."""
+class GateSearchV5(Controller):
+    """No-search navigate + early climb + faster inter-gate cruise (known tracks)."""
 
     _MODE_NAVIGATE = "NAVIGATE"
     _MODE_HOME = "HOME"
@@ -97,14 +106,15 @@ class GateSearchV3(Controller):
         """Initialise timing, drone parameters, PID, and the reference manager."""
         super().__init__(obs, info, config)
         if config.env.control_mode != "attitude":
-            raise ValueError("GateSearchV3 requires env.control_mode = 'attitude'.")
+            raise ValueError("GateSearchV5 requires env.control_mode = 'attitude'.")
         # orient_gates_to_travel=False: cross every gate along its canonical +x axis, the
         # direction the env requires for a counted pass (gate-local -x -> +x).
+        # early_climb=True: reach tall-gate height early so the run-in is level (v4 fix).
         self._settings = ControllerSettings(
             planner=PlannerSettings(
                 d_pre=_NAV_D_PRE, d_post=_NAV_D_POST, v_cruise=_V_CRUISE,
                 v_cruise_inter=_V_CRUISE_INTER, max_speed=_VMAX,
-                r_obs=_NAV_R_OBS, orient_gates_to_travel=False,
+                r_obs=_NAV_R_OBS, orient_gates_to_travel=False, early_climb=True,
             ),
             runtime=RuntimeSettings(lookahead_s=_NAV_LOOKAHEAD),
         )
