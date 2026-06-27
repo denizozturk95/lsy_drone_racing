@@ -171,3 +171,79 @@ def repair_obstacles(
         waypoints = np.insert(waypoints, segment, repair, axis=0)
         knot_times, curve = build_spline(waypoints, start_vel, gates_pos, obstacles_pos, settings)
     return waypoints, knot_times, curve
+
+
+def enforce_geofence(
+    waypoints: NDArray[np.floating],
+    start_vel: NDArray[np.floating],
+    gates_pos: NDArray[np.floating],
+    obstacles_pos: NDArray[np.floating],
+    settings: PlannerSettings,
+) -> tuple[NDArray[np.floating], NDArray[np.floating], CubicSpline]:
+    """Clamp the planned path into the arena (X/Y) so a wide curve can never leave the zone.
+
+    No-op unless ``settings.geofence_margin`` > 0 and both arena bounds are set. Otherwise the
+    fence sits ``geofence_margin`` m inside [arena_low, arena_high] in X/Y -- the margin reserves
+    room for downstream tracking overshoot. Two passes: (1) clamp every waypoint to the fence,
+    then (2) pull in any residual cubic-overshoot bulge between knots by inserting a fence-side
+    waypoint. The drone start (index 0) and every gate crossing are protected so the path still
+    begins at the drone and flies through each gate; bulges that sit on a gate are left alone.
+    Z is intentionally not fenced (the floor/ceiling are handled by gate heights and liftoff).
+    """
+    knot_times, curve = build_spline(waypoints, start_vel, gates_pos, obstacles_pos, settings)
+    if (
+        settings.geofence_margin <= 0.0
+        or settings.arena_low is None
+        or settings.arena_high is None
+    ):
+        return waypoints, knot_times, curve
+
+    low = np.asarray(settings.arena_low, dtype=np.float64)[:2] + settings.geofence_margin
+    high = np.asarray(settings.arena_high, dtype=np.float64)[:2] - settings.geofence_margin
+    gates_pos = np.asarray(gates_pos, dtype=np.float64)
+    gates_xy = gates_pos[:, :2] if len(gates_pos) else np.empty((0, 2), dtype=np.float64)
+    protect_r = 0.15  # waypoints/samples within this of a gate centre are gate crossings
+
+    def _on_gate(xy: NDArray[np.floating]) -> bool:
+        return bool(
+            len(gates_xy) and float(np.min(np.linalg.norm(gates_xy - xy, axis=1))) < protect_r
+        )
+
+    waypoints = np.asarray(waypoints, dtype=np.float64).copy()
+    moved = False
+    for index in range(1, len(waypoints)):  # index 0 is the drone start -> never move it
+        xy = waypoints[index, :2]
+        if _on_gate(xy):
+            continue
+        clamped = np.clip(xy, low, high)
+        if not np.array_equal(clamped, xy):
+            waypoints[index, :2] = clamped
+            moved = True
+    if moved:
+        knot_times, curve = build_spline(waypoints, start_vel, gates_pos, obstacles_pos, settings)
+
+    inner_low, inner_high = low + 0.03, high - 0.03  # insert just inside so the bulge stays in
+    for _ in range(6):
+        sample_t = np.linspace(0.0, float(knot_times[-1]), max(80, 20 * len(waypoints)))
+        pts = np.asarray(curve(sample_t), dtype=np.float64)
+        over = np.max(np.maximum(pts[:, :2] - high, low - pts[:, :2]), axis=1)
+        if len(gates_xy):  # ignore bulges that sit on a gate crossing (must reach the gate)
+            on_gate = np.min(
+                np.linalg.norm(pts[:, None, :2] - gates_xy[None, :, :], axis=2), axis=1
+            )
+            over = np.where(on_gate < protect_r, 0.0, over)
+        worst = int(np.argmax(over))
+        if float(over[worst]) <= 0.01:
+            break
+        viol = pts[worst]
+        repair = np.array(
+            [
+                float(np.clip(viol[0], inner_low[0], inner_high[0])),
+                float(np.clip(viol[1], inner_low[1], inner_high[1])),
+                float(viol[2]),
+            ]
+        )
+        segment = int(np.clip(np.searchsorted(knot_times, sample_t[worst]), 1, len(waypoints)))
+        waypoints = np.insert(waypoints, segment, repair, axis=0)
+        knot_times, curve = build_spline(waypoints, start_vel, gates_pos, obstacles_pos, settings)
+    return waypoints, knot_times, curve

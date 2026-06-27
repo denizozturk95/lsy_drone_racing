@@ -19,7 +19,7 @@ from lsy_drone_racing.control.online_planner.avoidance import (
     push_off_obstacles,
     reversal_turn,
 )
-from lsy_drone_racing.control.online_planner.timing import repair_obstacles
+from lsy_drone_racing.control.online_planner.timing import enforce_geofence, repair_obstacles
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -270,6 +270,12 @@ class ReferenceManager:
             self._settings,
         )
         waypoints, knot_times, curve = repair_obstacles(
+            waypoints, start_vel, frame.gate_pos, frame.obstacles_pos, self._settings
+        )
+        # Final guard: clamp the planned path inside the arena so a wide curve can never push the
+        # drone across a safety plane (no-op unless geofence_margin > 0). Runs after obstacle
+        # repair so the fence has the last word on staying in-bounds.
+        waypoints, knot_times, curve = enforce_geofence(
             waypoints, start_vel, frame.gate_pos, frame.obstacles_pos, self._settings
         )
         return ReferencePlan(

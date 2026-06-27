@@ -132,8 +132,8 @@ def reversal_turn(
     perp = perp / perp_norm if perp_norm > 1e-6 else np.array([0.0, 1.0])
     if float(np.dot(perp, to_next)) < 0.0:
         perp = -perp
-    swing_xy = np.asarray(base_xy, dtype=np.float64) + 0.55 * perp
-    apex_xy = 0.5 * (swing_xy + next_approach[:2]) + 0.10 * perp
+    swing_xy = np.asarray(base_xy, dtype=np.float64) + settings.reversal_swing_m * perp
+    apex_xy = 0.5 * (swing_xy + next_approach[:2]) + settings.reversal_apex_m * perp
     swing_z = prev_z + 0.30 * (next_z - prev_z)
     apex_z = prev_z + 0.70 * (next_z - prev_z)
     return [

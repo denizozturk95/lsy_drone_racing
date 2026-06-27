@@ -40,6 +40,21 @@ class PlannerSettings:
     # bottom frame bar on a late climb. Default False keeps the original Level-2/3 behavior
     # (GateSearchV4+ opt in; GateSearchV2/V3 unaffected).
     early_climb: bool = False
+    # U-turn (reversal) swing geometry, in metres along the lateral axis. The reversal waypoints
+    # bow out to the next-gate side so the clamped spline rounds the reversal without a cusp;
+    # smaller values keep the curve tighter (closer to the gates), which matters in tight arenas.
+    # Defaults reproduce the original hard-coded reversal_turn() values, so GateSearchV2..V8 are
+    # byte-equivalent; GateSearchV9 opts into smaller swings.
+    reversal_swing_m: float = 0.55
+    reversal_apex_m: float = 0.10
+    # Arena geofence (track-agnostic). When ``geofence_margin`` > 0 and arena bounds are provided,
+    # the planned path is clamped to stay at least ``geofence_margin`` m inside [arena_low,
+    # arena_high] in X/Y, reserving room for downstream tracking overshoot so a wide curve can
+    # never push the drone across a safety plane (the "leaves the zone -> abort" failure). Gate
+    # crossings are protected from the clamp. Default 0.0 disables it (GateSearchV2..V8 unchanged).
+    geofence_margin: float = 0.0
+    arena_low: tuple[float, float, float] | None = None
+    arena_high: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)

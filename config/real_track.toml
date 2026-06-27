@@ -1,5 +1,5 @@
 [controller]
-file = "gate_search_v7.py"
+file = "gate_search_v9.py"
 
 [deploy]
 check_drone_start_pos = true

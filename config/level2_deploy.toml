@@ -12,7 +12,7 @@
 # Use with scripts/eval_deploy.py. Do NOT use stock level2.toml / evaluate.py to judge the
 # deploy controller — that grades the harder unmeasured-track scenario.
 [controller]
-file = "gate_search_v8.py"
+file = "gate_search_v9.py"
 
 [deploy]
 check_race_track = true
