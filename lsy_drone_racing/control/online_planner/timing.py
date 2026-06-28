@@ -94,6 +94,13 @@ def build_spline(
             segment_times[index] = max(segment_times[index], settings.cold_start_min_seg)
     segment_times = obstacle_slowdown(waypoints, segment_times, obstacles_pos)
     segment_times = turn_slowdown(waypoints, segment_times)
+    if settings.max_descent_rate > 0.0:
+        # Stretch descending segments so the reference's downward speed stays trackable, else a
+        # steep drop (Level-3 search altitude -> low gate) outruns the tracker and the drone
+        # crosses the gate plane too high. Only slows segments that actually descend.
+        drop = -np.diff(np.asarray(waypoints, dtype=np.float64)[:, 2])  # +ve where descending
+        min_times = np.where(drop > 0.0, drop / settings.max_descent_rate, 0.0)
+        segment_times = np.maximum(segment_times, min_times)
     segment_times = _cap_peak_velocity(
         waypoints, segment_times, start_vel, settings.max_speed, skip=2
     )

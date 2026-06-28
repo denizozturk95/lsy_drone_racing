@@ -4,7 +4,7 @@
 # | :-----------------: | :----------------------------: | :-------------------------: | :---------------: | :-------------: |
 # | `level3.toml`       | *Yes*                          | *Yes*                       | *Yes*             | Online planning |
 [controller]
-file = "gate_search_v9.py" # Put your controller file name here. Specifying a controller as argument to scripts will override this setting. Controllers are located in `lsy_drone_racing/control/`
+file = "gate_search_v10.py" # Level 3 = random tracks: needs the SEARCH controller (v10). v9/v7/v8 are no-search (known-track) and score 0 here. Controllers are in `lsy_drone_racing/control/`
 
 [deploy]
 ### Settings only relevant for deployment

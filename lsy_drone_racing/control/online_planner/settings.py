@@ -55,6 +55,12 @@ class PlannerSettings:
     geofence_margin: float = 0.0
     arena_low: tuple[float, float, float] | None = None
     arena_high: tuple[float, float, float] | None = None
+    # Cap on the reference's downward speed (m/s). When > 0, any segment that descends is stretched
+    # so |dz|/dt <= max_descent_rate, keeping the planned descent gentle enough for the tracker to
+    # follow. Without it, a steep descent (e.g. from the Level-3 search altitude down to a gate)
+    # outruns the controller and the drone crosses the gate plane too high, clipping the top frame
+    # bar. Default 0.0 disables it (GateSearchV2..V9 unchanged); GateSearchV10 opts in.
+    max_descent_rate: float = 0.0
 
 
 @dataclass(frozen=True)
