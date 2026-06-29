@@ -1,5 +1,5 @@
 [controller]
-file = "gate_search_v9.py"
+file = "gate_search_v10.py"
 
 [deploy]
 check_drone_start_pos = true
@@ -15,7 +15,7 @@ drone_model = "cf21B_500"
 control_mode = "attitude"
 freq = 50
 id = "DroneRacing-v0"
-seed = -1
+seed = 1                 # fixed: real track is fully static (no randomization), so runs are reproducible
 sensor_range = 0.7
 
 [sim]
@@ -73,66 +73,6 @@ pos = [0.5520194172859192, 0.26283594965934753, 1.552022933959961]
 [[env.track.obstacles]]
 pos = [-0.41314584016799927, 0.543511688709259, 1.5518231391906738]
 
-[env.disturbances.action]
-fn = "normal"
-scale = 0.001
-
-[env.disturbances.dynamics]
-fn = "uniform"
-
-[env.randomizations.drone_inertia]
-fn = "uniform"
-
-[env.randomizations.drone_mass]
-fn = "uniform"
-
-[env.randomizations.drone_pos]
-fn = "uniform"
-
-[env.randomizations.drone_rpy]
-fn = "uniform"
-
-[env.randomizations.gate_pos]
-fn = "uniform"
-
-[env.randomizations.gate_rpy]
-fn = "uniform"
-
-[env.randomizations.obstacle_pos]
-fn = "uniform"
-
 [env.track.safety_limits]
 pos_limit_high = [2.5, 1.5, 2.0]
 pos_limit_low = [-2.5, -1.5, -0.001]
-
-[env.disturbances.dynamics.kwargs]
-maxval = [0.1, 0.1, 0.1]
-minval = [-0.1, -0.1, -0.1]
-
-[env.randomizations.drone_inertia.kwargs]
-maxval = [1e-6, 1e-6, 1e-6]
-minval = [-1e-6, -1e-6, -1e-6]
-
-[env.randomizations.drone_mass.kwargs]
-maxval = 0.005
-minval = -0.005
-
-[env.randomizations.drone_pos.kwargs]
-maxval = [0.1, 0.1, 0.02]
-minval = [-0.1, -0.1, 0.0]
-
-[env.randomizations.drone_rpy.kwargs]
-maxval = [0.1, 0.1, 0.1]
-minval = [-0.1, -0.1, -0.1]
-
-[env.randomizations.gate_pos.kwargs]
-maxval = [0.15, 0.15, 0.1]
-minval = [-0.15, -0.15, -0.1]
-
-[env.randomizations.gate_rpy.kwargs]
-maxval = [0.05, 0.1, 0.2]
-minval = [-0.05, -0.1, -0.2]
-
-[env.randomizations.obstacle_pos.kwargs]
-maxval = [0.15, 0.15, 0.05]
-minval = [-0.15, -0.15, -0.05]
