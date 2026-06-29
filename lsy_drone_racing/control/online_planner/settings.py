@@ -61,6 +61,20 @@ class PlannerSettings:
     # outruns the controller and the drone crosses the gate plane too high, clipping the top frame
     # bar. Default 0.0 disables it (GateSearchV2..V9 unchanged); GateSearchV10 opts in.
     max_descent_rate: float = 0.0
+    # ── Time-optimal path parameterization (TOPP) ──────────────────────────────────────────────
+    # When True, build_spline() replaces the heuristic time-allocation (fixed v_cruise + peri-gate /
+    # turn / obstacle slowdowns) with a curvature-aware, acceleration-limited speed profile: the
+    # straightaways run at ``max_speed`` and the path slows ONLY where curvature would exceed
+    # ``topp_a_lat`` (and near gates/obstacles for precision). A forward/backward pass bounds the
+    # tangential acceleration by ``topp_a_tang`` so the whole trajectory is dynamically feasible and
+    # therefore trackable at speed. This is the GateSearchV12 navigate paradigm. Default False keeps
+    # the classic time-allocation (every other controller/mode unchanged).
+    use_topp: bool = False
+    topp_a_lat: float = 8.0     # m/s² — max lateral (cornering) acceleration the speed profile allows
+    topp_a_tang: float = 6.0    # m/s² — max tangential (accel/brake along path) acceleration
+    topp_v_gate: float = 1.6    # m/s — speed cap within ``peri_gate_radius`` of a gate (crossing precision)
+    topp_v_obs: float = 1.2     # m/s — speed cap near a detected obstacle
+    topp_v_stop: float = 0.3    # m/s — speed at the final waypoint
 
 
 @dataclass(frozen=True)

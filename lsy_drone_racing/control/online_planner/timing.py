@@ -72,6 +72,8 @@ def build_spline(
     settings: PlannerSettings,
 ) -> tuple[NDArray[np.floating], CubicSpline]:
     """time-parameterize the waypoints into a clamped cubic spline."""
+    if settings.use_topp and len(np.asarray(waypoints)) >= 3:
+        return build_spline_topp(waypoints, start_vel, gates_pos, obstacles_pos, settings)
     start_vel = np.asarray(start_vel, dtype=np.float64)
     gates_pos = np.asarray(gates_pos, dtype=np.float64)
     segment_lengths = np.linalg.norm(np.diff(waypoints, axis=0), axis=1)
@@ -107,6 +109,143 @@ def build_spline(
     knot_times = np.concatenate([[0.0], np.cumsum(segment_times)])
     bc = ((1, start_vel), (1, np.zeros(3)))
     return knot_times, CubicSpline(knot_times, waypoints, bc_type=bc)
+
+
+class _PathTimeCurve:
+    """A time-parameterized reference defined by a FIXED geometric path + a speed law.
+
+    Unlike re-fitting a clamped cubic with new knot times (whose *shape* changes with the timing),
+    this evaluates a fixed geometry sampled densely (including every waypoint, so gate centres are
+    hit exactly) and just interpolates position / velocity / acceleration in time. The geometric
+    path is therefore invariant to the speed profile — the drone flies the same line whether fast or
+    slow. Mimics the scipy ``CubicSpline`` interface used by the tracker (call + ``derivative``).
+    """
+
+    def __init__(
+        self,
+        t_samples: NDArray[np.floating],
+        pos: NDArray[np.floating],
+        vel: NDArray[np.floating],
+        acc: NDArray[np.floating],
+    ):
+        self._t = np.asarray(t_samples, dtype=np.float64)
+        self._pos = np.asarray(pos, dtype=np.float64)
+        self._vel = np.asarray(vel, dtype=np.float64)
+        self._acc = np.asarray(acc, dtype=np.float64)
+
+    def _interp(self, arr: NDArray[np.floating], tq: NDArray[np.floating]) -> NDArray[np.floating]:
+        scalar = np.ndim(tq) == 0
+        tq = np.atleast_1d(np.asarray(tq, dtype=np.float64))
+        out = np.empty((len(tq), 3), dtype=np.float64)
+        for j in range(3):
+            out[:, j] = np.interp(tq, self._t, arr[:, j])
+        return out[0] if scalar else out
+
+    def __call__(self, tq: NDArray[np.floating]) -> NDArray[np.floating]:
+        return self._interp(self._pos, tq)
+
+    def derivative(self, order: int = 1):  # noqa: ANN201 - matches CubicSpline.derivative usage
+        """Return a callable for the 1st/2nd time-derivative (velocity / acceleration)."""
+        arr = self._vel if order == 1 else self._acc
+        return lambda tq: self._interp(arr, tq)
+
+
+def build_spline_topp(
+    waypoints: NDArray[np.floating],
+    start_vel: NDArray[np.floating],
+    gates_pos: NDArray[np.floating],
+    obstacles_pos: NDArray[np.floating],
+    settings: PlannerSettings,
+) -> tuple[NDArray[np.floating], _PathTimeCurve]:
+    """Time-OPTIMAL path parameterization of the waypoint chain.
+
+    Builds the *geometry* once (a chord-length cubic through the waypoints), then assigns a speed
+    profile that is as fast as the dynamics allow:
+
+      1. curvature limit  v(s) <= sqrt(a_lat / kappa(s))   — corners slow themselves, straights don't
+      2. precision caps   v <= v_gate near gates, v <= v_obs near obstacles, v <= descent cap
+      3. accel limit      a forward+backward pass bounds |dv/dt| by a_tang so the profile is feasible
+
+    The path is then resampled on a uniform time grid and refit as a clamped cubic in time, so the
+    returned curve has the same (curve, curve.derivative) interface as the classic builder. Because
+    the profile respects the drone's real lateral/tangential acceleration limits, it is trackable at
+    speed — unlike naively raising the cruise cap on the heuristic builder.
+    """
+    waypoints = np.asarray(waypoints, dtype=np.float64)
+    start_vel = np.asarray(start_vel, dtype=np.float64)
+    gates_pos = np.asarray(gates_pos, dtype=np.float64)
+    obstacles_pos = np.asarray(obstacles_pos, dtype=np.float64)
+
+    # ── 1. geometry: chord-length-parameterized clamped cubic ────────────────────────────────────
+    seg = np.linalg.norm(np.diff(waypoints, axis=0), axis=1)
+    seg = np.maximum(seg, 1e-6)
+    u_knots = np.concatenate([[0.0], np.cumsum(seg)])
+    total_len = float(u_knots[-1])
+    sv = float(np.linalg.norm(start_vel))
+    chord0 = (waypoints[1] - waypoints[0]) / seg[0]
+    # Initial geometric tangent: follow current motion if it points roughly forward, else the chord.
+    if sv > 0.3 and float(np.dot(start_vel, chord0)) > 0.0:
+        d0 = start_vel / sv
+    else:
+        d0 = chord0
+    dN = (waypoints[-1] - waypoints[-2]) / seg[-1]
+    geom = CubicSpline(u_knots, waypoints, bc_type=((1, d0), (1, dN)))
+
+    # ── dense sampling of the FIXED geometry (waypoint u-values forced in, so gates are exact) ───
+    n_dense = max(200, min(900, int(total_len * 120)))
+    us = np.union1d(np.linspace(0.0, total_len, n_dense), u_knots)
+    pts = np.asarray(geom(us), dtype=np.float64)
+    d1 = np.asarray(geom(us, 1), dtype=np.float64)  # dP/du
+    d2 = np.asarray(geom(us, 2), dtype=np.float64)  # d2P/du2
+    speed_u = np.maximum(np.linalg.norm(d1, axis=1), 1e-9)
+    tangent = d1 / speed_u[:, None]
+    kappa = np.linalg.norm(np.cross(d1, d2), axis=1) / speed_u**3
+    # arc length at each sample
+    ds_seg = np.maximum(np.linalg.norm(np.diff(pts, axis=0), axis=1), 1e-9)
+    s = np.concatenate([[0.0], np.cumsum(ds_seg)])
+    n = len(us)
+
+    # ── 2. speed limits ──────────────────────────────────────────────────────────────────────────
+    v = np.minimum(settings.max_speed, np.sqrt(settings.topp_a_lat / np.maximum(kappa, 1e-6)))
+    for gate in gates_pos:
+        near = np.linalg.norm(pts[:, :2] - gate[:2], axis=1) < settings.peri_gate_radius
+        v = np.where(near, np.minimum(v, settings.topp_v_gate), v)
+    for obstacle in obstacles_pos:
+        near = np.linalg.norm(pts[:, :2] - obstacle[:2], axis=1) < 0.40
+        v = np.where(near, np.minimum(v, settings.topp_v_obs), v)
+    if settings.max_descent_rate > 0.0:
+        dz_ds = np.gradient(pts[:, 2], s)  # vertical slope wrt arc length
+        descending = dz_ds < -1e-3
+        v = np.where(descending, np.minimum(v, settings.max_descent_rate / np.maximum(-dz_ds, 1e-6)), v)
+    v[0] = min(v[0], sv) if sv > 0.05 else v[0]
+    v[-1] = min(v[-1], settings.topp_v_stop)
+
+    # ── 3. forward/backward tangential-acceleration-limited pass (over arc length) ───────────────
+    a_tang = settings.topp_a_tang
+    for i in range(1, n):
+        v[i] = min(v[i], float(np.sqrt(v[i - 1] ** 2 + 2.0 * a_tang * ds_seg[i - 1])))
+    for i in range(n - 2, -1, -1):
+        v[i] = min(v[i], float(np.sqrt(v[i + 1] ** 2 + 2.0 * a_tang * ds_seg[i])))
+    v = np.maximum(v, 0.15)  # floor so the drone never stalls on the path
+
+    # ── 4. time at each sample: dt = ds / v_avg ──────────────────────────────────────────────────
+    v_avg = np.maximum(0.5 * (v[:-1] + v[1:]), 1e-3)
+    t_samples = np.concatenate([[0.0], np.cumsum(ds_seg / v_avg)])
+
+    # ── reference = fixed geometry under the speed law; analytic velocity / acceleration ─────────
+    # vel = v * T (tangent).  acc = a_tang_actual * T + v^2 * kappa_vec (tangential + centripetal),
+    # where kappa_vec = (P_uu - (P_uu·T)T)/|P_u|^2 is the curvature vector. Because the path is
+    # fixed, this never distorts the geometry the way a re-timed clamped cubic does.
+    dv_ds = np.gradient(v, s)
+    a_tangential = v * dv_ds
+    proj = np.sum(d2 * tangent, axis=1)[:, None]
+    kappa_vec = (d2 - proj * tangent) / (speed_u[:, None] ** 2)
+    vel = v[:, None] * tangent
+    acc = a_tangential[:, None] * tangent + (v[:, None] ** 2) * kappa_vec
+
+    knot_times = np.interp(u_knots, us, t_samples)  # one time per ORIGINAL waypoint (for repair/geofence)
+    curve = _PathTimeCurve(t_samples, pts, vel, acc)
+    return knot_times, curve
 
 
 def _cap_peak_velocity(
