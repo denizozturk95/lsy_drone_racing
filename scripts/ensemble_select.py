@@ -30,6 +30,7 @@ _DEFAULT = [
     "controller_v24.py",        # + OCP obstacle keep-out r=0.13
     "controller_v24_r10.py",    # tighter keep-out (recovers centred-doorway seeds)
     "controller_v24_r16.py",    # wider keep-out (route-obstacle margin)
+    "controller_v24_wg.py",     # tighter gate tracking (lifts the hard/floor seeds)
     "gate_search_v11.py",       # different stack entirely (spline navigate)
 ]
 
