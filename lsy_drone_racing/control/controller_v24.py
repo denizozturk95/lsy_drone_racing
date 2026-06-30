@@ -36,6 +36,7 @@ class ControllerV24(ControllerV17):
         a_max = self._command.thrust_max / self._mass
         self._mpcc = MPCCv24(self._settings.mpcc, a_max)
         self._revealed_obs_xy = np.zeros((0, 2), dtype=np.float64)
+        self._r_avoid = _R_AVOID  # per-instance keep-out radius (variants override; runtime param)
 
     def reset(self) -> None:
         """Reset v17 state plus the v24 MPCC and the revealed-obstacle buffer."""
@@ -64,5 +65,5 @@ class ControllerV24(ControllerV17):
             return poles.reshape(0, 3)
         triples = np.empty((len(poles), 3), dtype=np.float64)
         triples[:, :2] = poles
-        triples[:, 2] = _R_AVOID
+        triples[:, 2] = self._r_avoid
         return triples

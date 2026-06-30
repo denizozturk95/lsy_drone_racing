@@ -23,7 +23,15 @@ from gymnasium.wrappers.jax_to_numpy import JaxToNumpy
 from lsy_drone_racing.utils import load_config, load_controller
 
 _ROOT = Path(__file__).resolve().parents[1]
-_DEFAULT = ["controller_v17.py", "controller_v24.py", "gate_search_v11.py"]
+# Anti-correlated pool: each wins different track layouts, so best-of-pool per seed beats any single.
+# Validated 51% on fresh seeds 2000-2900 (vs 42% best single, 47% v17+v24 pair). See memory.
+_DEFAULT = [
+    "controller_v17.py",        # search + v10.5 MPCC (no avoidance)
+    "controller_v24.py",        # + OCP obstacle keep-out r=0.13
+    "controller_v24_r10.py",    # tighter keep-out (recovers centred-doorway seeds)
+    "controller_v24_r16.py",    # wider keep-out (route-obstacle margin)
+    "gate_search_v11.py",       # different stack entirely (spline navigate)
+]
 
 
 def _finish_rate(controller_cls, cfg, seed: int, n_runs: int) -> int:
