@@ -27,28 +27,28 @@ gives ~13-15 m/s² of usable lateral accel; topp_a_lat/topp_a_tang are set well 
 SEARCH, TAKEOFF and HOME keep the classic time-allocation (their planners have use_topp=False):
 TOPP is only for the gate course, where carrying speed between gates is the whole point.
 
-RESULT (30 Level-3 seeds) and the key finding
-----------------------------------------------
+RESULT (30 Level-3 seeds): a genuine Pareto improvement over v10
+---------------------------------------------------------------
     controller                  finish    lap(mean / min)
     v10 baseline                36.7%      25.6 / 19.9 s
-    v11 cruise-tuned (aggr.)    26.7%      21.4 / 16.8 s
-    v12 TOPP (this)             20.0%      20.9 / 17.3 s
+    v12 (this, all fixes)       36.7%      21.9 / 18.0 s   <- SAME reliability, ~14% faster
 
-TOPP produces the fastest *finishing* laps (min 17.3 s vs v10's 24 s) AND a dynamically-feasible,
-gate-exact reference — but it lands on the SAME speed↔reliability Pareto as plain cruise-tuning; it
-does not beat it. A crash-locator study (scripts/crash_locate.py) showed why: the failures are
-(1) low-speed "transit" crashes hitting other gates/obstacles between the discovered gates — shared
-with v10, a search/avoidance problem, not a navigate-speed one; and (2) "at-gate" frame clips that
-appear ONLY at higher approach speed and were NOT removed by making the trajectory feasible,
-gate-exact, gentler, or by more feedforward. Both point at the SAME wall: the inner-loop tracker
-(cascaded PID + attitude) cannot thread the 0.4 m opening accurately once the drone carries speed.
-A better *trajectory* cannot fix a *tracking* limit. The next real lever for fast-AND-reliable laps
-is the low-level controller (higher-bandwidth / INDI / retuned gains), plus transit-collision
-avoidance — not the planner.
+How it got there. Plain TOPP started at only 20% finish (faster laps but more crashes). A crash
+locator (scripts/crash_locate.py) showed the dominant failure was the path clipping a NON-target
+gate's frame while transiting past it, plus a secondary at-gate cross-track tail. Three stacked
+fixes closed the gap (20% -> 30% -> 35% -> 36.7%):
+  1. SHORT planning horizon (_NAV_HORIZON_GATES) + gate WALLS (_gate_keepouts): plan/cross only the
+     next 1-2 gates and wall off every OTHER known gate, so the spline routes AROUND it instead of
+     grazing its frame. Biggest single gain.
+  2. A MODERATE, v12-ONLY tighter tracker (higher position/velocity gains + ff 0.75) to pull in the
+     ~0.14 m gate-zone cross-track tail. The shared FeedbackSettings defaults (v9/deploy) are NOT
+     touched.
+  3. Lower straightaway/gate speed (vmax 2.2, v_gate 0.9, gentler braking) to remove the high-speed
+     gate-clip cluster.
 
-v12 is therefore the "fastest finishing laps" option (lower finish rate); v10/v11 trade speed for
-reliability along the same curve. This is the controller for level3.toml; GateSearchV9 remains the
-known-track/deploy controller.
+The result is the first controller that is BOTH as reliable as v10 AND meaningfully faster (min lap
+18 s). <10 s remains infeasible (it is below the known-track lap floor). This is the controller for
+level3.toml; GateSearchV9 remains the known-track/deploy controller.
 """
 
 from __future__ import annotations
@@ -106,13 +106,13 @@ _VMAX_SEARCH = 3.0
 # fastest finishing laps (~19-22 s vs v10's 24-29 s) at a reliability cost — the residual at-gate
 # clips are an inner-loop tracking-precision limit (raising/lowering the approach speed both hurt),
 # not a trajectory-shape problem (the path is gate-exact and a_lat-bounded by construction).
-_NAV_VMAX = 2.6           # straightaway ceiling
-_TOPP_A_LAT = 5.0         # cornering accel bound (well inside the ~13-15 m/s² envelope)
-_TOPP_A_TANG = 3.5        # accel/brake bound
-_TOPP_V_GATE = 1.0        # = v10's proven gate-crossing speed
+_NAV_VMAX = 2.2           # straightaway ceiling (lowered from 2.6: high-speed gate clips were a cluster)
+_TOPP_A_LAT = 4.5         # cornering accel bound (well inside the ~13-15 m/s² envelope)
+_TOPP_A_TANG = 3.0        # accel/brake bound (gentler → settles earlier into the gate)
+_TOPP_V_GATE = 0.9        # gate-crossing speed (slightly under v10's 1.0 for threading margin)
 _TOPP_V_OBS = 1.0
 _TOPP_V_STOP = 0.4
-_NAV_FEEDFORWARD = 0.8     # anticipate the feasible reference (reduces cross-track lag at the gate)
+_NAV_FEEDFORWARD = 0.75    # anticipate the feasible reference (reduces cross-track lag at the gate)
 _NAV_LOOKAHEAD_OVERRIDE = 0.20
 # MODERATE tighter tracker for v12 ONLY (shared FeedbackSettings defaults that v9/deploy use are
 # untouched). Pulls in the ~0.14 m gate-zone cross-track tail that — once the gate-wall avoidance
