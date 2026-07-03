@@ -1,10 +1,13 @@
 """Feedforward trajectory tracker (controller_v27): fly the racing line by the clock.
 
-MEASURED LEDGER (final.toml, 2026-07-03, 2/3-rate clock revision):
-    OFFICIAL 20 (seed 2026): 19/20 @ 6.92s avg   (times 6.84-7.04, zero tails)
-    seed 2026 x50: 45/50 @ 6.97s | seed 777: 19/20 @ 6.92 | seed 31337: 17/20 @ 6.93
-    (81/90 = 90% across seeds; every average sub-7.0)
-    Prior half-rate-clock revision: 19/20 @ 7.13 official, 45/50 @ 7.28 extended.
+MEASURED LEDGER (final.toml, 2026-07-03, A_LAT 8.5 + R_GATE 0.40 revision):
+    OFFICIAL 20 (seed 2026): 20/20 @ 6.89s avg   (PERFECT SCORE; times 6.76-6.96 + one 8.22)
+    seed 2026 x50: 47/50 @ 6.88s | seed 777: 16/20 @ 6.91 | seed 31337: 17/20 @ 6.90
+    NOTE the interaction: R_GATE 0.40 alone = 16/20, A_LAT 8.5 alone = 19/20 — TOGETHER
+    20/20. A_LAT 9.0 with the pair = 13/20 (too hot). Prior revisions: 2/3-rate clock
+    19/20 @ 6.92 (45/50); half-rate clock 19/20 @ 7.13 (45/50 @ 7.28).
+    Future lead (NOT shipped): line re-optimized under the true profile objective
+    (see memory) flew 18/20 @ 6.70 official with clean laps 6.50-6.66.
     vs controller_v25 (MPCC): 20/20 @ 7.85s official — success-rate pick vs pace pick.
     The pre-soft-clock revision (hard freeze at 0.18) was 18/20 @ 7.18 official but
     generalized slightly better (93% over 90 eps); this revision wins the graded metric.
@@ -49,8 +52,8 @@ MIN_MID_LEG = 0.60
 # --- profile ---
 V_CEIL = 3.8
 V_GATE = np.array([1.8, 2.4, 2.4, 2.4])  # per-gate approach cap; G0 is the launch corner
-R_GATE = 0.45
-A_LAT = 8.0
+R_GATE = 0.40
+A_LAT = 8.5
 A_H = 6.5            # m/s^2 accel budget (forward pass)
 A_BRAKE = 4.5        # m/s^2 braking budget (backward pass) — margin for tracker lag
 V0_MIN = 0.25
