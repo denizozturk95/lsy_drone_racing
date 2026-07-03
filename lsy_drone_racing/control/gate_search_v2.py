@@ -13,7 +13,7 @@ GateSearchV2 sets it False for NAVIGATE so gates are crossed along their canonic
 — the direction the environment requires for a pass (``envs/utils.py:gate_passed`` counts a
 crossing only from gate-local -x to +x). The Level-3 randomizer orients every gate's +x
 along the intended traversal order, so without this the drone flew through gate openings
-*backwards* and the pass was never counted. KaFa_1500_v6 (Level 2) uses the default and is
+*backwards* and the pass was never counted. The Level-2 controller uses the default and is
 unaffected (verified: identical per-seed results).
 
 Modes
