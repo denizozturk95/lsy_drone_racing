@@ -1,21 +1,7 @@
-"""controller_v17 — Level-3 hybrid: blind-spiral discovery + v10.5's MPCC tunnel navigate.
+"""Level-3 hybrid: blind-spiral discovery + v10.5 MPCC tunnel navigate (v17).
 
-The MPCC tunnel navigate (controller_v10_5) threads tight gate+obstacle corridors far better than
-the spline-waypoint navigate of the gate_search line: with perfect detection it finishes level3 at
-65% / ~8 s vs gate_search's 55% / ~16 s. Its only gap on level3 is that, with sensor_range 0.7 m,
-it commits to a reference through nominal positions and flies it fast into an unrevealed obstacle.
-
-v17 inserts a SEARCH mode between v10.5's TAKEOFF and NAVIGATE: the drone climbs above every pole
-and flies a blind Archimedean spiral (level3 nominal gate positions are placeholders at the origin,
-so the search must COVER the arena), revealing the true gate and obstacle positions. Once all gates
-are discovered it hands off to v10.5's NAVIGATE -- which now plans its tunnel over TRUE positions.
-
-SEARCH tracks one smooth spiral spline with a PD acceleration command through v10.5's
-_vector_to_attitude (NOT the takeoff CascadedPid, which cannot hold altitude in horizontal flight).
-The reference is CLUTCHED (steps forward only while the drone keeps up) so it can neither run away
-nor jump between nearby spiral loops, and the horizontal acceleration is CAPPED so the thrust vector
-never tilts far enough to drop the drone into the ground / pole tops. NAVIGATE is v10.5 verbatim.
-REQUIRES the acados environment.
+SEARCH: blind Archimedean spiral reveals gates/obstacles. NAVIGATE: v10.5 verbatim
+over true positions. REQUIRES acados (``pixi run``).
 """
 
 from __future__ import annotations
@@ -34,10 +20,10 @@ if TYPE_CHECKING:
 
     from lsy_drone_racing.control.common_controller_v2.state import DroneObservation
 
-_SEARCH_ALT = 1.8       # m — above every gate frame / obstacle (detection is XY-only, so free)
-_SEARCH_SPEED = 1.1     # m/s — spiral cruise (gentle reveal pass, not a race)
-_CATCH_RADIUS = 0.7     # m — advance the reference only while the drone is within this of it
-_KP, _KD = 6.0, 4.0     # PD gains: position error + reference-velocity feed-forward -> accel
+_SEARCH_ALT = 1.8
+_SEARCH_SPEED = 1.1
+_CATCH_RADIUS = 0.7
+_KP, _KD = 6.0, 4.0
 _SPIRAL_RADIAL_STEP = 0.6
 _SPIRAL_ANGLE_STEP = np.pi / 6
 _SEARCH_RADIUS = 2.2
@@ -80,7 +66,6 @@ class ControllerV17(ControllerV105):
         n_gates = len(gates_visited)
         self._known_gates.update(int(i) for i in np.nonzero(gates_visited)[0])
 
-        # ── TAKEOFF: v10.5/v8 vertical climb ──────────────────────────────────
         if self._mode == self._MODE_TAKEOFF:
             if not self._takeoff.is_complete(frame, self._tick, self._dt):
                 action = self._takeoff.action(
@@ -91,7 +76,6 @@ class ControllerV17(ControllerV105):
             self._mode = self._MODE_SEARCH
             self._build_search_curve(frame)
 
-        # ── SEARCH: reveal the gates (and their neighbouring obstacles) ───────
         if self._mode == self._MODE_SEARCH:
             done = (
                 len(self._known_gates) >= n_gates
@@ -101,7 +85,6 @@ class ControllerV17(ControllerV105):
                 action = self._search_action(frame)
                 self._last_action = action
                 return action.copy()
-            # hand off to v10.5 NAVIGATE with true positions; cold-start its MPCC/anchor
             self._mode = self._MODE_NAVIGATE
             self._references.reset()
             self._mpcc.reset()
@@ -110,7 +93,6 @@ class ControllerV17(ControllerV105):
             self._path = None
             self._gate_nominal = None
 
-        # ── NAVIGATE: v10.5 MPCC tunnel, verbatim ────────────────────────────
         action = self._track_action(frame)
         self._last_action = action
         return action.copy()

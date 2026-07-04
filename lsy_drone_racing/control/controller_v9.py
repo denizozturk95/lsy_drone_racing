@@ -1,15 +1,7 @@
-"""controller_v9 — MPCC drone-racing controller for known tracks.
+"""MPCC drone-racing controller for known tracks (v9).
 
-v9 = gate-aware planner (as path geometry) + a model-predictive contouring
-controller (MPCC) in place of v8's hand-tuned speed caps and cascaded-PID tracker. The
-MPCC plans world-frame accelerations that chase a reference receding along the path,
-bounded by thrust/tilt limits, so it flies as fast as is dynamically feasible on whatever
-geometry the planner produces (no per-track cruise tuning). Phase machine:
-
-    TAKEOFF  -> v8 vertical climb, cascaded-PID tracked
-    NAVIGATE -> v8 ReferenceManager path, tracked by the MPCC
-
-Every path/takeoff tunable is inherited from v8; the MPCC knobs live in controller_core_v9/cockpit.py.
+Gate-aware planner (v8 path geometry) + model-predictive contouring controller.
+TAKEOFF → NAVIGATE phases. REQUIRES the acados environment (``pixi run``).
 """
 
 from __future__ import annotations
@@ -85,7 +77,6 @@ class ControllerV9(Controller):
             self._finished = True
             return self._last_action.copy()
 
-        # ── TAKEOFF: v8 vertical climb, PID-tracked ───────────────────────────
         if self._mode == self._MODE_TAKEOFF:
             if not self._takeoff.is_complete(frame, self._tick, self._dt):
                 action = self._takeoff.action(
@@ -99,7 +90,6 @@ class ControllerV9(Controller):
             self._progress_t = 0.0
             self._nav_start_tick = self._tick
 
-        # ── NAVIGATE: v8 path, MPCC-tracked ───────────────────────────────────
         action = self._track_action(frame)
         self._last_action = action
         return action.copy()
@@ -107,11 +97,9 @@ class ControllerV9(Controller):
     def _track_action(self, frame: DroneObservation) -> NDArray[np.floating]:
         """(Re)plan the global path and let the MPCC fly it within the actuator limits."""
         plan, rebuilt = self._references.ensure_plan(frame)
-        if rebuilt:  # a new plan is re-parameterized from t=0; restart the projection search
+        if rebuilt:
             self._progress_t = 0.0
         self._progress_t = self._project(plan, frame.pos)
-        # Ramp the reference recede speed up after the takeoff handoff so the MPCC settles
-        # onto the path before lunging at the first gate (see cockpit RAMP_*).
         elapsed = (self._tick - self._nav_start_tick) * self._dt
         ramp = min(1.0, self._ramp_start + (1.0 - self._ramp_start) * elapsed / self._ramp_s)
         ref_p, ref_t = sample_path(plan.curve, self._progress_t, plan.t_total, self._arc * ramp)

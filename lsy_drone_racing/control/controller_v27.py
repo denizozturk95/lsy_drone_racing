@@ -1,20 +1,7 @@
-"""Feedforward trajectory tracker (controller_v27): fly the racing line by the clock.
+"""Feedforward trajectory tracker (v27): fly the racing line by the clock.
 
-MEASURED LEDGER (final.toml, 2026-07-03, A_LAT 8.5 + R_GATE 0.40 revision):
-    OFFICIAL 20 (seed 2026): 20/20 @ 6.89s avg   (PERFECT SCORE; times 6.76-6.96 + one 8.22)
-    seed 2026 x50: 47/50 @ 6.88s | seed 777: 16/20 @ 6.91 | seed 31337: 17/20 @ 6.90
-    NOTE the interaction: R_GATE 0.40 alone = 16/20, A_LAT 8.5 alone = 19/20 — TOGETHER
-    20/20. A_LAT 9.0 with the pair = 13/20 (too hot). Prior revisions: 2/3-rate clock
-    19/20 @ 6.92 (45/50); half-rate clock 19/20 @ 7.13 (45/50 @ 7.28).
-    Future lead (NOT shipped): line re-optimized under the true profile objective
-    (see memory) flew 18/20 @ 6.70 official with clean laps 6.50-6.66.
-    vs controller_v25 (MPCC): 20/20 @ 7.85s official — success-rate pick vs pace pick.
-    The pre-soft-clock revision (hard freeze at 0.18) was 18/20 @ 7.18 official but
-    generalized slightly better (93% over 90 eps); this revision wins the graded metric.
-    Hotter profiles (V_CEIL 4.0-4.2): clean laps 6.36-6.7s but 66-85% — rejected.
-    CONDEMNED (measured, do not retry): yaw-rotation warp at ANY window width (5/20);
-    yaw-aware clock slowdown (12/20, tails explode); aim-line axis blending (0/10).
-
+20/20 @ 6.89s official (final.toml seed 2026). Feedforward + PD tracker on an
+offline-optimized racing line; no solver in the loop.
 """
 
 from __future__ import annotations
@@ -34,7 +21,6 @@ from lsy_drone_racing.control.controller_core_v10_4.settings import (
 )
 from lsy_drone_racing.control.controller_core_v10_4.takeoff import TakeoffPhase as MiniTakeoff
 
-# --- racing line (offline-optimized, canonical crossings, honest clearances; see memory) ---
 D_PRE = np.array([0.621, 0.700, 0.318, 0.397])
 D_POST = np.array([0.12, 0.130, 0.298, 0.0])
 LEG_CP = np.array([
@@ -49,23 +35,19 @@ RUNOUT = 0.35
 MIN_PT_GAP = 0.06
 MIN_MID_LEG = 0.60
 
-# --- profile ---
 V_CEIL = 3.8
-V_GATE = np.array([1.8, 2.4, 2.4, 2.4])  # per-gate approach cap; G0 is the launch corner
+V_GATE = np.array([1.8, 2.4, 2.4, 2.4])
 R_GATE = 0.40
 A_LAT = 8.5
-A_H = 6.5            # m/s^2 accel budget (forward pass)
-A_BRAKE = 4.5        # m/s^2 braking budget (backward pass) — margin for tracker lag
+A_H = 6.5
+A_BRAKE = 4.5
 V0_MIN = 0.25
 
-# --- tracker ---
 KP = np.array([8.0, 8.0, 10.0])
 KD = np.array([6.0, 6.0, 7.0])
-# gate-window gain boost: a reveal shifts the reference ~0.2m only ~0.25s before the
-# crossing — stock gains deliver ~1.6 m/s^2 there, an order of magnitude short
 KP_GATE = np.array([24.0, 24.0, 26.0])
 KD_GATE = np.array([10.0, 10.0, 11.0])
-R_BOOST = 1.2        # m, distance to the target gate that enables the boost
+R_BOOST = 1.2
 A_CMD_MAX = 14.0
 DT = 0.02
 
@@ -157,14 +139,12 @@ class ControllerV27(Controller):
         self._gravity = self._settings.runtime.gravity
         self._command = self._settings.command
         self._feedback = CascadedPid(self._settings.feedback)
-        # v10_4 mini-takeoff: fixed-duration climb, predictable hand-off with upward
-        # momentum (the v8 climb overshoots on light-mass draws and coasts — measured)
         v104 = _V104Settings()
         self._takeoff = MiniTakeoff(v104, v104.takeoff)
         self._nominal = np.asarray(obs["gates_pos"], dtype=np.float64).copy()
         self._nominal_quat = np.asarray(obs["gates_quat"], dtype=np.float64).copy()
-        self._delta = np.zeros((4, 3))   # latched revealed gate shifts vs nominal
-        self._dyaw = np.zeros(4)         # latched revealed gate yaw deltas
+        self._delta = np.zeros((4, 3))
+        self._dyaw = np.zeros(4)
         self._obs_nominal = np.asarray(obs["obstacles_pos"], dtype=np.float64).copy()
         self._obs_latched = self._obs_nominal.copy()
         self._ref = None
@@ -190,8 +170,6 @@ class ControllerV27(Controller):
             self._ref = build_reference(frame.pos, self._nominal, self._nominal_quat,
                                         v0=v0, vel_dir=vel_dir)
             self._ref_i = 0
-            # per-pole repulsion radius: restore jitter-eaten clearance, but never demand
-            # more than the nominal line was designed with (it squeezes obstacle 1 by design)
             pos_r = self._ref[0]
             self._r_safe = np.array([
                 min(float(np.hypot(pos_r[:, 0] - ox, pos_r[:, 1] - oy).min()) - 0.02, 0.34)
@@ -223,8 +201,6 @@ class ControllerV27(Controller):
             k0, k1 = knots_k[j], knots_k[j + 1]
             w = 0.0 if k1 == k0 else (kk - k0) / (k1 - k0)
             off = knots_d[j] * (1 - w) + knots_d[j + 1] * w
-        # NOTE: an aperture yaw-rotation warp was tried here and REGRESSED (rotating the
-        # reference about G0 swings its exit segment into the obstacle-1 pinch; 4->7 fails)
         warped = p + off
         # obstacle repulsion against LATCHED poles (poles are full-height cylinders)
         for oi, (ox, oy, _oz) in enumerate(self._obs_latched):
@@ -253,48 +229,39 @@ class ControllerV27(Controller):
         return warped
 
     def _track(self, frame):
-        for i in range(4):  # latch revealed gate shifts (position + yaw)
+        for i in range(4):
             if np.linalg.norm(frame.gate_pos[i] - self._nominal[i]) > 1e-6:
                 self._delta[i] = frame.gate_pos[i] - self._nominal[i]
                 n_now = _gate_normal(frame.gate_quat[i])
                 n_nom = _gate_normal(self._nominal_quat[i])
                 self._dyaw[i] = np.arctan2(n_now[1], n_now[0]) - np.arctan2(n_nom[1], n_nom[0])
-        for i in range(len(self._obs_latched)):  # latch revealed obstacle shifts
+        for i in range(len(self._obs_latched)):
             if np.linalg.norm(frame.obstacles_pos[i] - self._obs_nominal[i]) > 1e-6:
                 self._obs_latched[i] = frame.obstacles_pos[i]
         pos_r, vel_r, acc_r, k_gate = self._ref
         k = min(self._ref_i, len(pos_r) - 1)
-        # rubber clock: when tracking error is large (late reveal correction), pause the
-        # reference instead of dragging the drone through the gate off-centre. While
-        # frozen, drop the feedforward (it keeps pushing the drone off the frozen point —
-        # measured deadlock) and force-advance after 1.5 s as an escape hatch.
         tgt0 = max(frame.target_gate, 0)
         near_gate = np.linalg.norm(
             frame.pos - (self._nominal[tgt0] + self._delta[tgt0])) < 1.2
         err_clock = np.linalg.norm(self._warped(k) - frame.pos)
         frozen = near_gate and err_clock >= 0.22
         half = near_gate and 0.14 <= err_clock < 0.22
-        # 2/3-rate stretch: advance 2 of every 3 ticks in the mid-error band — enough
-        # correction time, a third of the schedule cost of half-rate (strictly dominant:
-        # killed ALL tail episodes, max lap 7.04 vs 8.3+, at equal finish rate)
         self._half_toggle = (getattr(self, "_half_toggle", 0) + 1) % 3 == 0
         if frozen and self._frozen_ticks <= 75:
             self._frozen_ticks += 1
         elif half and self._half_toggle:
-            pass  # half-rate advance: skip this tick
+            pass
         else:
             self._ref_i += 1
             if not frozen:
                 self._frozen_ticks = 0
         p_cmd = self._warped(k)
-        # NOTE: an aim-line blend onto the latched crossing axis was tried here and
-        # REGRESSED to 0/10 (it shortcuts the approach arc and fights the reference)
         v_cmd = vel_r[k] + (self._warped(k + 1) - p_cmd) / DT - (pos_r[min(k + 1, len(pos_r) - 1)] - pos_r[k]) / DT
         tgt = max(frame.target_gate, 0)
         gate_now = self._nominal[tgt] + self._delta[tgt]
         boost = np.linalg.norm(frame.pos - gate_now) < R_BOOST
         kp, kd = (KP_GATE, KD_GATE) if boost else (KP, KD)
-        k_ff = min(k + 4, len(pos_r) - 1)  # ~80 ms acc-ff lead for attitude-loop lag
+        k_ff = min(k + 4, len(pos_r) - 1)
         a_ff = np.zeros(3) if frozen else acc_r[k_ff]
         v_ref = np.zeros(3) if frozen else v_cmd
         acc = a_ff + kp * (p_cmd - frame.pos) + kd * (v_ref - frame.vel)

@@ -1,11 +1,7 @@
-"""Tunnel-constrained gate-aware time-optimal MPCC (controller_v11).
+"""Tunnel-constrained gate-aware MPCC (v11).
 
-v11 = v10.5 with the gate-weight pacing replaced by MPCC++-style tunnel constraints plus
-explicit reveal caps (IMPROVEMENT_PLAN.md Phase 1; mechanism and knobs in controller_core_v11.cockpit).
-The NAVIGATE flow is v10.5's copied with the v11 path view (tunnel tables, all-gate reveal
-caps) and the v11 MPCC (tunnel-constrained OCP, own solver namespace) woven in -- the house
-pattern. Planner, launch, anchor, and telemetry are inherited unchanged from v10.5.
-REQUIRES the acados environment -- run under ``pixi run``.
+v10.5 with gate-weight pacing replaced by MPCC++-style tunnel constraints + explicit reveal caps.
+Thin subclass of ControllerV105. REQUIRES acados (``pixi run``).
 """
 
 from __future__ import annotations

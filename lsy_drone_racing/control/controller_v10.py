@@ -1,15 +1,8 @@
-"""Time-optimal MPCC drone racing controller for known tracks (controller_v10).
+"""Time-optimal MPCC drone racing controller for known tracks (v10).
 
-v10 flies v9's gate-aware planner and vertical takeoff, but replaces v9/v9.1's
-fixed-recede-rate contouring MPCC with a *time-optimal* MPCC (see controller_core_v10.mpcc): the path
-progress and its rate are decision variables and the cost rewards progress, so the optimiser
-picks traversal speed against the actuator limits -- riding V_MAX on straights and
-auto-braking into corners -- rather than chasing a hand-capped V_REF.
-
-Because progress is a state anchored to the drone's foot-point each step, v9.1's external
-geometric projection and its whole 5-knob stall governor are gone: the reference cannot
-freeze ahead of the drone. Only the MPCC and how it is fed differ from v9, so this is a thin
-subclass of ControllerV9. The MPCC knobs live in controller_core_v10/cockpit.py.
+Thin subclass of ControllerV9. Replaces v9's fixed-recede-rate contouring MPCC with a
+time-optimal MPCC: path progress is a decision variable, the cost rewards progress,
+so the optimiser picks traversal speed against actuator limits. REQUIRES acados (``pixi run``).
 """
 
 from __future__ import annotations

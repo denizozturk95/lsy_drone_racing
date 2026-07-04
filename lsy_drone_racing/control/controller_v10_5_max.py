@@ -1,35 +1,8 @@
-"""controller_v10_5_max: v10.5 with a MAX-ATTACK speed budget (the "go way faster" build).
+"""v10.5 with a max-attack speed budget (v10_5_max).
 
-v10.5 flies a good line but paces well below its own curvature profile (the "solver-pace gap":
-v10.x flies 0.5-0.9 m/s under its profile everywhere because pacing is a cost-side balance). This
-build keeps v10.5's architecture UNCHANGED -- planner, dynamics-aware anchor, gate contour spikes,
-mini-takeoff -- and only reshapes the speed cockpit:
-
-  MU          1.5 -> 4.0   progress reward: drive vth hard at the profile (close the pace gap)
-  V_THETA_MAX 3.2 -> 4.5   straight-line top speed
-  V_MAX       3.2 -> 4.5   (kept consistent with V_THETA_MAX)
-  A_THETA_MAX 8.0 -> 12.0  let vth ramp to the higher cap out of corners
-  A_LAT_MAX   8.5 -> 10.5  corner speed. cf21B_500 a_max = 0.8 N / 0.04338 kg = 18.4 m/s^2
-                           (T/W ~ 1.9); level-flight lateral ceiling at tilt 1.0 is ~9.8, so 10.5
-                           borrows a little vertical through corners -- aggressive but realizable.
-  TILT_RATIO  0.85 -> 1.0  45 deg cornering authority
-  RAMP        0.25/2.4 -> 0.40/1.6  hot launch
-  V_GATE_REACT 2.5 -> off  DROP the gate-0 launch cap and keep reactive caps off (max attack)
-  PROJ_BAND   0.6 -> 0.8   the anchor's legitimate per-step advance scales with speed; widen the
-                           correction band so it never clamps (still < 1.0, above which the fold
-                           teleport returns -- v10.2 ledger).
-
-HONEST CAVEAT -- the target (final.toml): this is a Level-3 layout with [env.track] randomize=false
-BUT [env.randomizations] still perturbs gate pos +/-0.15 m, gate yaw, obstacles +/-0.15 m and mass
-EVERY reset, revealed only within 0.7 m. So the reveal ceiling BINDS here exactly as it does on
-randomized level2, where the v10.4 ledger measured that raising any gate's window speed -- and
-dropping the launch cap in particular -- trades finish-rate for lap time ("EIGHT mechanisms all
-landed ON the frontier"). Expect this build to be much faster on the finishes it makes and to shed
-finishes vs v10.5 (gate-0 corridor + gate crossings at speed under the +/-0.15 reveal). Measure on
-final.toml and dial MU / V_THETA_MAX / A_LAT_MAX / the dropped cap back toward v10.5 to taste.
-
-REQUIRES the acados environment (a fresh solver is code-generated: the cache key changes with MU,
-V_THETA_MAX, A_THETA_MAX, TILT_RATIO). Run under ``pixi run``.
+Same architecture, reshaped budget: MU 4.0, V_THETA_MAX 4.5, A_LAT_MAX 10.5, TILT_RATIO 1.0,
+hotter ramp (0.40/1.6), dropped gate-0 cap. Faster on finishes, sheds some vs v10.5 under
++/-0.15 m reveal. REQUIRES the acados environment (``pixi run``).
 """
 
 from __future__ import annotations
