@@ -1,10 +1,15 @@
-"""controller_v24_r10_fast — v24_r10 with a faster, tighter search spiral (PARAMETERS ONLY).
+"""controller_v24_r10_fast — v24_r10 with a faster search spiral (PARAMETERS ONLY).
 
 Same algorithm as v24_r10 / v17: blind Archimedean-spiral discovery, then v10.5 MPCC navigate.
-The ONLY change is the spiral's numeric budget — arm spacing (tighter), traversal speed (faster),
-and the PD tracking gains that let the drone keep up. Both methods below are byte-for-byte v17's,
-with the constants swapped; no control-flow change. Spiral knobs read from env so they can be swept:
-SPIRAL_SPEED, SPIRAL_STEP, SPIRAL_RADIUS, SPIRAL_KP, SPIRAL_KD, SPIRAL_CATCH.
+The ONLY change is the spiral's numeric budget; both methods below are byte-for-byte v17's with the
+constants swapped, no control-flow change.
+
+Tuned on final.toml (N=30, thread-pinned). Frontier vs stock v24_r10 (85% @ 25.6 s):
+    SPEED 1.6 -> 83% @ 20.4 s   |   1.8 -> 80% @ 18.7 s   |   2.0 -> 73% @ 17.0 s  (baked: 2.0)
+Speed is the lever: it shrinks the search tax from ~17 s to ~11 s, trading reliability past ~1.8
+(a takeoff->search entry-transient crash). "Tighter" (wider arm spacing) is NOT usable — a step
+above ~0.6 opens coverage gaps that miss gates and crash; radius must stay >=~2.2 to reach gate 2.
+Knobs stay env-overridable for re-tuning: SPIRAL_SPEED/STEP/RADIUS/KP/KD/CATCH.
 """
 
 from __future__ import annotations
@@ -18,12 +23,12 @@ from lsy_drone_racing.control import controller_v17 as _v17
 from lsy_drone_racing.control.common_controller_v2.attitude import _vector_to_attitude
 from lsy_drone_racing.control.controller_v24_r10 import ControllerV24R10
 
-_SPEED = float(os.environ.get("SPIRAL_SPEED", "2.4"))  # was 1.1
-_STEP = float(os.environ.get("SPIRAL_STEP", "1.2"))  # was 0.6 (arm spacing; sensor swath ~1.4 m)
+_SPEED = float(os.environ.get("SPIRAL_SPEED", "2.0"))  # was 1.1; faster spiral traversal
+_STEP = float(os.environ.get("SPIRAL_STEP", "0.6"))  # arm spacing; >0.6 opens coverage gaps
 _RADIUS = float(os.environ.get("SPIRAL_RADIUS", "2.3"))  # was 2.2 (>=~2.2 to reach gate 2)
-_KP = float(os.environ.get("SPIRAL_KP", "9.0"))  # was 6.0
-_KD = float(os.environ.get("SPIRAL_KD", "5.0"))  # was 4.0
-_CATCH = float(os.environ.get("SPIRAL_CATCH", "0.8"))  # was 0.7 (clutch radius)
+_KP = float(os.environ.get("SPIRAL_KP", "6.0"))  # baseline; higher crashes the entry transient
+_KD = float(os.environ.get("SPIRAL_KD", "4.0"))  # baseline
+_CATCH = float(os.environ.get("SPIRAL_CATCH", "0.7"))  # clutch radius; tighter hurt
 
 
 class ControllerV24R10Fast(ControllerV24R10):
