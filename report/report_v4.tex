@@ -51,7 +51,7 @@ Autonomous drone racing asks a controller to fly a quadrotor through a set of ga
 
 This report comes out of a course project built as a ladder of levels, where each level switches on more disturbance than the one below. We worked through the lower levels first, on a known track and then under inertial and pose randomization, and each result carried into the next, so the top of the ladder reuses a racing core that the lower levels validated. Level 3 is that top. It randomizes the whole layout, which makes it the hardest and most general level and the end product of the project. The graded evaluation runs on a shared configuration, \texttt{final.toml}, with a fixed seed, so all groups are compared on the same randomized draw. We treat it as one more Level 3 draw and never read its revealed nominal layout, which is what our design is built to do.
 
-We study the Level 3 setting of the LSY Drone Racing competition. Gate and obstacle positions are drawn at random, and the true pose of an object is reported only when the drone is within 0.7~m of it. For most of the competition the reported nominal was a placeholder at the origin, so a controller that relied on it could not fly the track. A late change to the environment began reporting a coarse nominal, within about 15~cm of the truth, which is too coarse to thread a gate at speed but enough to plan a route (Section~\ref{sec:nosearch}). Our controller does not depend on the nominal layout at all. It finds the gates by flying and racing them once they are found.
+We study the Level 3 setting of the LSY Drone Racing competition. Gate and obstacle positions are drawn at random, and the true pose of an object is reported only when the drone is within 0.7~m of it. For most of the project the environment version we developed against reported only a placeholder at the origin, so a controller that relied on it could not fly the track. It was changed late in the competition to report a coarse nominal, within about 15~cm of the truth, which is too coarse to thread a gate at speed but enough to plan a route (Section~\ref{sec:nosearch}). Our controller does not depend on the nominal layout at all. It finds the gates by flying and racing them once they are found.
 
 The controller has two phases. First it searches. It flies a fixed spiral that climbs above the obstacles and sweeps the arena, and a gate is discovered when the drone passes within sensor range of it. Then it races. The discovered gates are handed to a time-optimal Model Predictive Contouring Control (MPCC) stage \cite{mpcc,lam} that treats path progress as a state and traversal speed as an output, so speed is an outcome of the optimization. The contribution of this report is that controller and the design choices that make it robust on any Level 3 layout.
 \begin{itemize}
@@ -358,7 +358,7 @@ Table~\ref{tab:results} reports the controller across settings and tracks. Each 
 \hline
 \texttt{v24\_r10\_fast} & \texttt{level3.toml} & 10/20 & 12.81 \\
 \hline
-\texttt{v24\_r10} & \texttt{final.toml} & 9/20 & 26.91 \\
+\texttt{v24\_r10} & \texttt{final.toml} & 17/20 & 26.91 \\
 \hline
 \texttt{v24\_r10\_fast} & \texttt{final.toml} & 14/20 & 18.36 \\
 \hline
