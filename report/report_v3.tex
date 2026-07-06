@@ -60,7 +60,7 @@ We evaluate the controller on randomized Level 3 tracks and on the fixed competi
 \label{sec:related}
 Time-optimal quadrotor flight through a fixed set of gates is well studied. Foehn et al.\ compute a full time-optimal trajectory that respects the single-rotor thrust limits \cite{foehn}, and minimum-snap trajectories \cite{minsnap} are a common lighter planning choice. These methods give the fastest known laps on a known track, but they assume the gates are known and do not move.
 
-Model Predictive Contouring Control was introduced for machining \cite{lam} and brought to racing on 1:43 cars \cite{liniger}. Romero et al.\ applied a time-optimal MPCC to quadrotor flight and showed it reaches the actuator limit in real time \cite{mpcc}. MPCC++ adds a safe tunnel around the reference as hard constraints \cite{mpccpp}. We use the time-optimal MPCC formulation for the racing stage.
+MPCC was introduced for machining \cite{lam} and brought to racing on 1:43 cars \cite{liniger}. Romero et al.\ applied a time-optimal MPCC to quadrotor flight and showed it reaches the actuator limit in real time \cite{mpcc}. MPCC++ adds a safe tunnel around the reference as hard constraints \cite{mpccpp}. We use the time-optimal MPCC formulation for the racing stage.
 
 Learning-based controllers train a policy that maps the observation to an action in one forward pass and have reached champion-level lap times \cite{champion,songrl}. They are fast but need training and are harder to inspect. The part that is specific to Level 3 is that the gates are not known in advance, so the controller has to discover them before it can race. We handle this with an explicit search stage rather than a learned exploration policy.
 
@@ -118,8 +118,6 @@ The controller runs three phases. A short, aggressive launch, which we call the 
 \label{sec:search}
 On Level 3 the gate positions and the gate order are unknown, so the controller must find the gates before it can race. It does this with a fixed geometric sweep and does not use the nominal positions. After takeoff the drone climbs to a search altitude of 1.8~m, which is above the 1.52~m obstacle poles, so the sweep cannot hit one. It then follows an Archimedean spiral that grows outward from its start position, with a radial step of 0.6~m out to a radius of 2.2~m, clipped to the arena, flown at 1.1~m/s with a PD tracker. Fig.~\ref{fig:spiral} sketches the sweep.
 
-As the drone's horizontal position comes within the 0.7~m sensor range of a gate center, that gate is revealed and its index is collected. The search ends when every gate has been discovered or the spiral is finished, as in Algorithm~\ref{alg:search}. The discovered true poses are then passed to the racing stage. The sweep is blind by design. It covers the arena geometrically, so it works on any layout, and it is the price the controller pays for not knowing where the gates are.
-
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[scale=1.0, font=\scriptsize,
@@ -152,26 +150,42 @@ As the drone's horizontal position comes within the 0.7~m sensor range of a gate
 \label{fig:spiral}
 \end{figure}
 
-\begin{algorithm}[t]
-\caption{Gate search (per control tick, search phase)}
-\label{alg:search}
-\begin{algorithmic}[1]
-\REQUIRE spiral curve, drone position $p$, discovered set $K$, gate count $n$
-\STATE follow the spiral with a PD law at the search speed and altitude
-\FORALL{gates $j$}
-    \IF{$j \notin K$ and $\lVert p_{xy} - j_{xy} \rVert < 0.7$}
-        \STATE $K \leftarrow K \cup \{j\}$ \quad (true pose revealed)
-    \ENDIF
-\ENDFOR
-\IF{$|K| = n$ or the spiral is finished}
-    \STATE start racing the gates in $K$
-\ENDIF
-\end{algorithmic}
-\end{algorithm}
+As the drone's horizontal position comes within the 0.7~m sensor range of a gate center, that gate is revealed and its index is collected. The search ends when every gate has been discovered or the spiral is finished, as in Fig.~\ref{fig:search}. The discovered true poses are then passed to the racing stage. The sweep is blind by design. It covers the arena geometrically, so it works on any layout, and it is the price the controller pays for not knowing where the gates are.
+
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  node distance=6mm and 12mm,
+  term/.style={draw, rounded corners=3mm, align=center, minimum width=24mm, minimum height=6.5mm, fill=blue!6},
+  proc/.style={draw, align=center, text width=33mm, minimum height=8mm, inner sep=3pt},
+  dec/.style={draw, diamond, aspect=2, align=center, inner sep=1pt},
+  flow/.style={-{Latex[length=1.6mm]}, thick},
+  lbl/.style={inner sep=1.5pt}
+]
+\node[term] (start) {Search phase};
+\node[proc, below=of start] (follow) {Follow the fixed spiral (PD law, search speed and altitude)};
+\node[dec, below=of follow] (near) {Gate within\\ 0.7~m?};
+\node[proc, right=12mm of near, text width=23mm] (reveal) {Reveal true pose, add to found set $K$};
+\node[dec, below=15mm of near] (done) {All gates found\\ or spiral done?};
+\node[term, below=of done] (race) {Race the gates in $K$};
+
+\draw[flow] (start) -- (follow);
+\draw[flow] (follow) -- (near);
+\draw[flow] (near) -- node[lbl, above]{yes} (reveal);
+\draw[flow] (reveal) |- (done);
+\draw[flow] (near) -- node[lbl, right]{no} (done);
+\draw[flow] (done) -- node[lbl, right]{yes} (race);
+\draw[flow] (done.west) -- node[lbl, above, pos=0.12]{no} ++(-2.0,0) |- (follow.west);
+\end{tikzpicture}
+\caption{Gate search, run once per control tick in the search phase. The drone follows the fixed spiral and reveals any gate that comes within 0.7~m in the horizontal plane, adding it to the found set $K$. It keeps sweeping until every gate is found or the spiral ends, then hands $K$ to the racing stage.}
+\label{fig:search}
+\end{figure}
 
 \subsection{Time-Optimal MPCC}
 \label{sec:mpcc}
-Once the gates are known the racing stage is a time-optimal Model Predictive Contouring Control problem \cite{mpcc,lam}. A planner fits a clamped cubic spline through the discovered gates, with two virtual columns per gate at the frame edges so the spline threads the opening center, and a keep-out radius around the obstacles. MPCC adds a progress variable $\xi$ that runs along this path and a progress rate $v_\xi$. The state is
+Once the gates are known the racing stage is a time-optimal MPCC problem \cite{mpcc,lam}. A planner fits a clamped cubic spline through the discovered gates, with two virtual columns per gate at the frame edges so the spline threads the opening center, and a keep-out radius around the obstacles. MPCC adds a progress variable $\xi$ that runs along this path and a progress rate $v_\xi$. The state is
 \begin{equation}
 x = [\, p^\top,\; v^\top,\; \xi,\; v_\xi \,]^\top,
 \end{equation}
@@ -201,20 +215,36 @@ which soft-bounds the speed and the progress rate. We solve the program in real 
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[scale=1.0, font=\scriptsize]
-\draw[thick, blue] (0,0.4) .. controls (2,1.6) and (4,0.2) .. (6,1.2);
-\node[blue] at (6.1,1.45) {path};
-\coordinate (pr) at (3.05,0.86);
-\coordinate (dr) at (3.7,1.75);
-\fill (pr) circle (1.4pt); \node[below] at (pr) {$p_{\text{ref}}(\bar\xi)$};
-\fill[red] (dr) circle (1.6pt); \node[right] at (dr) {$p$ (drone)};
-\draw[-{Latex[length=1.6mm]}] (pr) -- ++(1.4,0.42) node[pos=1.0, right] {$t$};
-\draw[dashed, gray] (pr) -- (dr);
-\coordinate (foot) at (3.52,1.19);
-\draw[{Latex[length=1.4mm]}-{Latex[length=1.4mm]}, orange] (pr) -- (foot) node[midway, below right, orange] {$e_l$};
-\draw[{Latex[length=1.4mm]}-{Latex[length=1.4mm]}, teal] (foot) -- (dr) node[midway, left, teal] {$e_c$};
+\begin{tikzpicture}[scale=1.5, font=\scriptsize,
+  ar/.style={-{Latex[length=1.5mm]}},
+  dot/.style={circle, fill=black, inner sep=1.2pt}]
+  % Precomputed points: tangent at 20 deg, normal at 110 deg.
+  % F = P + 2.0*tangent (foot);  D = F + 1.0*normal (drone).
+  \coordinate (P) at (0,0);
+  \coordinate (F) at (1.879,0.684);
+  \coordinate (D) at (1.537,1.624);
+  % path: tangent to the 20 deg direction at P (control handles kept along it)
+  \draw[blue, thick]
+     (-1.504,-0.454)
+     .. controls (-0.846,-0.308) and (-0.329,-0.120) .. (P)
+     .. controls (0.329,0.120) and (1.504,0.327) .. (2.913,0.560);
+  \node[blue, anchor=west, inner sep=2pt] at (2.913,0.560) {path};
+  % tangent line: stub before P, then continues past the foot with the t arrow
+  \draw[gray] (-0.517,-0.188) -- (P);
+  \draw[gray, ar] (F) -- (2.443,0.889) node[black, anchor=south west, inner sep=1pt] {$t$};
+  % error decomposition: right triangle ref (P) -- foot (F) -- drone (D)
+  \draw[orange, thick, ar] (P) -- (F) node[midway, above, inner sep=2pt] {$e_l$};
+  \draw[teal, thick, ar]   (F) -- (D) node[midway, right, inner sep=2pt] {$e_c$};
+  \draw[gray, dashed]      (P) -- (D) node[midway, above left, inner sep=1pt] {$e$};
+  % right-angle mark at the foot
+  \draw[gray] (1.738,0.633) -- (1.687,0.774) -- (1.828,0.825);
+  % points and labels
+  \node[dot] at (P) {};
+  \node[anchor=north west, inner sep=2pt] at (0.02,-0.03) {$p_{\text{ref}}(\bar\xi)$};
+  \node[dot, fill=red] at (D) {};
+  \node[red, anchor=south west, inner sep=2pt] at (D) {$p$ (drone)};
 \end{tikzpicture}
-\caption{Contouring geometry. The path error $e$ splits into a lag part $e_l$ along the tangent $t$ and a contouring part $e_c$ across it. MPCC penalizes the contouring error hard and the lag softly, and rewards progress so the drone flies as fast as the constraints allow.}
+\caption{Contouring geometry. At the reference point $p_{\text{ref}}(\bar\xi)$ the path has tangent $t$. The error from the drone position $p$ splits into a lag part $e_l$ along $t$ and a contouring part $e_c$ across it, and the two meet at a right angle at the foot. Together they form the full error $e$. MPCC penalizes the contouring error hard and the lag softly, and rewards progress so the drone flies as fast as the constraints allow.}
 \label{fig:contour}
 \end{figure}
 
