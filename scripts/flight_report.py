@@ -187,7 +187,7 @@ def _plot_3d(traj, title, path):
     k = int(np.argmax(z > 0.2)) if (z > 0.2).any() else 0  # drop the ground-level takeoff climb
     p, sp = p[k:], sp[k:]
     norm = plt.Normalize(0, traj["spd"].max())
-    fig = plt.figure(figsize=(8, 7))
+    fig = plt.figure(figsize=(5.5, 4.5))
     ax = fig.add_subplot(111, projection="3d")
     segs = np.stack([p[:-1], p[1:]], axis=1)
     lc = Line3DCollection(segs, cmap=CMAP, norm=norm, linewidth=2.4)
