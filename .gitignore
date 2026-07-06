@@ -14,6 +14,10 @@ plots/
 c_generated_code/
 /build
 
+# OS-generated files
+.DS_Store
+Thumbs.db
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml

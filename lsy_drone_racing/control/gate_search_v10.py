@@ -225,12 +225,7 @@ class GateSearchV10(Controller):
         self._takeoff_start_tick = 0
         self._home_plan: tuple | None = None
         self._home_start_tick = 0
-        # Debug visualisation state — written by compute_control, read by render_callback
-        self._dbg_gate_pos: NDArray = np.empty((0, 3), dtype=np.float64)
-        self._dbg_known_mask: NDArray = np.zeros(0, dtype=bool)
-        self._dbg_target_gate: int = -1
-        self._dbg_obs_pos: NDArray = np.empty((0, 3), dtype=np.float64)
-        self._dbg_wp_pos: NDArray = np.empty((0, 3), dtype=np.float64)
+
 
     # ── Main control loop ────────────────────────────────────────────────────
 
@@ -297,35 +292,6 @@ class GateSearchV10(Controller):
             self._finished = True
             return self._last_action.copy()
 
-        # ── DEBUG VISUALISATION ──────────────────────────────────────────────
-        # Capture marker state here; render_callback draws it using draw_line.
-        self._dbg_gate_pos = np.asarray(frame.gate_pos, dtype=np.float64)
-        known_mask = np.zeros(len(frame.gate_pos), dtype=bool)
-        for idx in self._known_gates:
-            if idx < len(frame.gate_pos):
-                known_mask[idx] = True
-        self._dbg_known_mask = known_mask
-        self._dbg_target_gate = int(frame.target_gate)
-        det_obs = frame.obstacles_pos[obs_visited] if obs_visited.any() else np.empty((0, 3))
-        self._dbg_obs_pos = np.asarray(det_obs, dtype=np.float64)
-        # Planned waypoints: spiral window in SEARCH, gate positions in NAVIGATE
-        if self._mode == self._MODE_SEARCH:
-            vt = self._virtual_target
-            n_wps = len(self._spiral_wps)
-            end = min(vt + _SPIRAL_HORIZON, n_wps)
-            self._dbg_wp_pos = self._spiral_wps[vt:end].copy()
-        elif self._mode == self._MODE_NAVIGATE:
-            ref_plan = self._references.plan
-            if ref_plan is not None:
-                n_samples = min(10, ref_plan.t_total * 5)
-                t_pts = np.linspace(0.0, ref_plan.t_total, max(2, int(n_samples)))
-                self._dbg_wp_pos = np.asarray(ref_plan.curve(t_pts), dtype=np.float64)
-            else:
-                self._dbg_wp_pos = np.empty((0, 3), dtype=np.float64)
-        else:
-            self._dbg_wp_pos = np.empty((0, 3), dtype=np.float64)
-        # ── END DEBUG VISUALISATION ──────────────────────────────────────────
-
         return action
 
     # ── TAKEOFF mode ─────────────────────────────────────────────────────────
@@ -387,11 +353,6 @@ class GateSearchV10(Controller):
         # SEARCH flies the sweep above the track, so the search path is left fully
         # unconstrained: no obstacles (real OR virtual gate-frame) are passed to the
         # planner.  NAVIGATE keeps the full avoidance logic (see _navigate_action).
-        # Disabled SEARCH-only avoidance (kept for easy revert):
-        # det_obs = frame.obstacles_pos[obs_visited] if obs_visited.any() else np.empty((0, 3))
-        # gate_obs = self._gate_post_obstacles(frame)
-        # if len(gate_obs):
-        #     det_obs = np.concatenate([det_obs, gate_obs], axis=0)
         det_obs = np.empty((0, 3))
 
         # Advance the virtual target when the drone is close enough in 2-D
@@ -406,29 +367,6 @@ class GateSearchV10(Controller):
             self._search_references.reset()
             self._progress_t = 0.0
             self._plan_start_tick = self._tick
-
-        # SEARCH-only gate-avoidance heuristic — DISABLED.  This block skipped spiral
-        # waypoints within _GATE_SKIP_RADIUS of a detected gate (because such waypoints
-        # become protected gate-centre waypoints the planner can't push off).  With the
-        # search path now unconstrained the spiral no longer routes around gates, so the
-        # skip is unnecessary.  Kept commented for easy revert.  NAVIGATE is unaffected.
-        # if self._known_gates:
-        #     gate_xys = frame.gate_pos[sorted(self._known_gates), :2]
-        #     n_wps = len(self._spiral_wps)
-        #     advances = 0
-        #     while advances < _SPIRAL_HORIZON:
-        #         vt = self._virtual_target
-        #         if vt >= n_wps - 1:
-        #             break
-        #         dists = np.linalg.norm(gate_xys - self._spiral_wps[vt, :2], axis=1)
-        #         if dists.min() < _GATE_SKIP_RADIUS:
-        #             self._virtual_target = vt + 1
-        #             self._search_references.reset()
-        #             self._progress_t = 0.0
-        #             self._plan_start_tick = self._tick
-        #             advances += 1
-        #         else:
-        #             break
 
         # If the detected-obstacle count changed the stored snapshot has a different
         # shape and trajectory._needs_plan would raise a numpy shape error — rebuild.
@@ -686,11 +624,7 @@ class GateSearchV10(Controller):
         self._references.reset()
         self._search_references.reset()
         self._last_action = self._hover_action()
-        self._dbg_gate_pos = np.empty((0, 3), dtype=np.float64)
-        self._dbg_known_mask = np.zeros(0, dtype=bool)
-        self._dbg_target_gate = -1
-        self._dbg_obs_pos = np.empty((0, 3), dtype=np.float64)
-        self._dbg_wp_pos = np.empty((0, 3), dtype=np.float64)
+
 
     def episode_callback(self) -> None:
         """Reset controller state at the end of an episode."""
@@ -709,38 +643,6 @@ class GateSearchV10(Controller):
         if plan is not None:
             samples = plan.curve(np.linspace(0.0, plan.t_total, 100))
             draw_line(sim, np.asarray(samples, dtype=np.float32), rgba=(0.0, 1.0, 0.0, 1.0))
-
-        # ── DEBUG VISUALISATION ──────────────────────────────────────────────
-        arm = 0.08  # half-length of each cross arm in metres
-
-        def _cross(pos: NDArray, rgba: tuple) -> None:
-            """Draw a 3-axis cross at pos using three two-point draw_line calls."""
-            p = np.asarray(pos, dtype=np.float32)
-            for axis in range(3):
-                seg = np.zeros((2, 3), dtype=np.float32)
-                seg[0] = p
-                seg[1] = p
-                seg[0, axis] -= arm
-                seg[1, axis] += arm
-                draw_line(sim, seg, rgba=rgba)
-
-        # Green crosses at detected gate centres; bright green for current target
-        for i, gp in enumerate(self._dbg_gate_pos):
-            if not self._dbg_known_mask[i]:
-                continue
-            if i == self._dbg_target_gate:
-                _cross(gp, rgba=(0.0, 1.0, 0.0, 1.0))   # bright green — target gate
-            else:
-                _cross(gp, rgba=(0.0, 0.55, 0.0, 1.0))  # dim green — other known gates
-
-        # Red crosses at detected (sensor-confirmed) obstacle positions
-        for op in self._dbg_obs_pos:
-            _cross(op, rgba=(1.0, 0.0, 0.0, 1.0))
-
-        # Blue crosses at current planned waypoints
-        for wp in self._dbg_wp_pos:
-            _cross(wp, rgba=(0.2, 0.4, 1.0, 1.0))
-        # ── END DEBUG VISUALISATION ──────────────────────────────────────────
 
     def diagnostic(self) -> dict:
         """Return a short status dict for logging."""

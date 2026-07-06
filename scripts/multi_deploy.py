@@ -70,7 +70,6 @@ def control_loop(rank: int, config: ConfigDict, start_barrier: Barrier):
         while rclpy.ok():
             t_loop = time.perf_counter()
             obs, info = env.unwrapped.obs(), env.unwrapped.info()
-            # Enable this if you want to test with single drone controllers. TODO: Remove
             obs = {k: v[rank] for k, v in obs.items()}
             action = controller.compute_control(obs, info)
             next_obs, reward, terminated, truncated, info = env.step(action)
