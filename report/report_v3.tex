@@ -1,9 +1,9 @@
 %% Robust Level-3 Autonomous Drone Racing by Gate Search and Time-Optimal MPCC
 %% Report v3: built around controller_v24_r10 (blind spiral gate search + v10.5 MPCC).
 %% Built on the IEEE conference template (IEEEtran).
-%% External image files (place next to this .tex): gate_weight.png (Fig. 4),
-%% mpcc_racing_2d.png and mpcc_racing_3d.png (Fig. 5, left and right). Other figures are
-%% self-contained TikZ. Compile with pdflatex, run twice.
+%% External image files live in figs_v24_r10/ (fig_topdown.png, fig_3d.png, fig_speed.png).
+%% The gate-weight schedule and all other diagrams are self-contained TikZ.
+%% Compile with pdflatex, run twice.
 \documentclass[conference]{IEEEtran}
 \IEEEoverridecommandlockouts
 % The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
@@ -21,7 +21,7 @@
 
 \begin{document}
 
-\title{Robust Level-3 Autonomous Drone Racing\\ by Gate Search and Time-Optimal Contouring Control}
+\title{Robust Level~3 Autonomous Drone Racing\\ by Gate Search and Time-Optimal Contouring Control}
 
 \author{\IEEEauthorblockN{1\textsuperscript{st} Ahmet Arda Hız}
 \IEEEauthorblockA{\textit{Learning Systems and Robotics} \\
@@ -39,11 +39,13 @@ deniz.oeztuerk@tum.de}
 \maketitle
 
 \begin{abstract}
-Autonomous drone racing tests a controller at the limit of a vehicle's dynamics. We study the full Level 3 setting, where the gate positions and the gate order are randomized and the true pose of an object is revealed only when the drone comes within 0.7~m of it. A controller that reads the nominal layout does not transfer to this setting, so our controller first finds the gates and then races them. It does not use the nominal positions at all. It flies a fixed spiral sweep that climbs above the obstacles and covers the arena, and each gate is discovered when the drone passes within sensor range in the horizontal plane. The discovered gates are handed to a time-optimal Model Predictive Contouring Control (MPCC) stage that races them, with a gate-aware contouring weight and a dynamics-aware progress anchor for reliability. The method is general. It finishes 12 of 20 runs on randomized Level 3 tracks at a lap time near 17.6~s, and it finishes all 20 runs on the fixed competition track at 25.8~s. We describe the design, the price the search pays for generality, and how it grew out of a fast known-track racing core that we flew on the real drone at 9.55~s.
+Autonomous drone racing tests a controller at the limit of a vehicle's dynamics. The competition is staged as a ladder of difficulty levels, and we advanced through all of them. Level 3 is the last and hardest, so it is the focus of this report and the capstone of the project, since it needs the racing foundation that the earlier levels build. We study this full Level 3 setting, where the gate positions and the gate order are randomized and the true pose of an object is revealed only when the drone comes within 0.7~m of it. A controller that reads the nominal layout does not transfer to this setting, so our controller first finds the gates and then races them. It does not use the nominal positions at all. It flies a fixed spiral sweep that climbs above the obstacles and covers the arena, and each gate is discovered when the drone passes within sensor range in the horizontal plane. The discovered gates are handed to a time-optimal Model Predictive Contouring Control (MPCC) stage that races them, with a gate-aware contouring weight and a dynamics-aware progress anchor for reliability. The method is general. In its robust setting it finishes 12 of 20 runs on randomized Level 3 tracks at a lap time of 18.8~s, and it finishes all 20 runs on the fixed competition track at 25.8~s. A faster, more aggressive setting of the same controller cuts the Level 3 lap time to 12.8~s at a small cost in success rate. We describe the design, the price the search pays for generality, and how it grew out of a fast known-track racing core that we flew on the real drone at 9.55~s.
 \end{abstract}
 
 \section{Introduction}
 Autonomous drone racing asks a controller to fly a quadrotor through a set of gates in the shortest time without hitting a gate frame or an obstacle. It is a common benchmark because a fast lap forces the vehicle to work near its actuation limit, where small errors are punished at once \cite{survey}. Much of the drone racing work assumes a known track, where every gate position is fixed before the flight and the task is a single time-optimal trajectory \cite{foehn,minsnap}. The full Level 3 setting breaks that assumption. The gate positions and the gate order are randomized, and the vehicle only sees the true geometry once it is close.
+
+This report comes out of a course project built as a ladder of levels, where each level switches on more disturbance than the one below. We worked through the lower levels first, on a known track and then under inertial and pose randomization, and each result carried into the next, so the top of the ladder reuses a racing core that the lower levels validated. Level 3 is that top. It randomizes the whole layout, which makes it the hardest and most general level and the end product of the project. The graded evaluation runs on one shared track, \texttt{final.toml}, so all groups are compared on the same course. We treat that course as one more Level 3 draw and never read its nominal layout, which is what our design is built to do.
 
 We study the Level 3 setting of the LSY Drone Racing competition. Gate and obstacle positions are drawn at random, and the true pose of an object is reported only when the drone is within 0.7~m of it. A controller that relies on the nominal layout therefore does not work here, because the layout it would read is not the one it flies. Our controller does not read the nominal layout at all. It finds the gates by flying and racing them once they are found.
 
@@ -56,15 +58,15 @@ We evaluate the controller on randomized Level 3 tracks and on the fixed competi
 
 \section{Related Work}
 \label{sec:related}
-Time-optimal quadrotor flight through a fixed set of gates is well studied. Foehn et al.\ compute a full time-optimal trajectory that respects the single-rotor thrust limits \cite{foehn}. These methods give the fastest known laps on a known track, but they assume the gates are known and do not move.
+Time-optimal quadrotor flight through a fixed set of gates is well studied. Foehn et al.\ compute a full time-optimal trajectory that respects the single-rotor thrust limits \cite{foehn}, and minimum-snap trajectories \cite{minsnap} are a common lighter planning choice. These methods give the fastest known laps on a known track, but they assume the gates are known and do not move.
 
 Model Predictive Contouring Control was introduced for machining \cite{lam} and brought to racing on 1:43 cars \cite{liniger}. Romero et al.\ applied a time-optimal MPCC to quadrotor flight and showed it reaches the actuator limit in real time \cite{mpcc}. MPCC++ adds a safe tunnel around the reference as hard constraints \cite{mpccpp}. We use the time-optimal MPCC formulation for the racing stage.
 
-Learning based controllers train a policy that maps the observation to an action in one forward pass and have reached champion-level lap times \cite{champion,songrl}. They are fast but need training and are harder to inspect. Minimum-snap trajectories \cite{minsnap} are a common choice for the planning step. The part that is specific to Level 3 is that the gates are not known in advance, so the controller has to discover them before it can race. We handle this with an explicit search stage rather than a learned exploration policy.
+Learning-based controllers train a policy that maps the observation to an action in one forward pass and have reached champion-level lap times \cite{champion,songrl}. They are fast but need training and are harder to inspect. The part that is specific to Level 3 is that the gates are not known in advance, so the controller has to discover them before it can race. We handle this with an explicit search stage rather than a learned exploration policy.
 
 \section{Problem Description}
 \label{sec:problem}
-We use the LSY Drone Racing environment, which builds on the safe-control-gym benchmark \cite{scg} with a Crazyflie 2.1 quadrotor \cite{crazyflie} as the model. The vehicle has a mass of 43~g and a thrust to weight ratio near 1.9. A track holds four gates and four obstacles. A gate opening is 0.4~m wide inside a 0.72~m frame, so the usable gap is about three vehicle widths.
+We use the LSY Drone Racing environment, which builds on the safe-control-gym benchmark \cite{scg} with a Crazyflie 2.1 quadrotor \cite{crazyflie} as the model. The vehicle has a mass of 43~g and a thrust-to-weight ratio near 1.9. A track holds four gates and four obstacles. A gate opening is 0.4~m wide inside a 0.72~m frame, so the usable gap is about three vehicle widths.
 
 At each step the controller reads an observation
 \begin{equation}
@@ -78,7 +80,7 @@ a = [\, \phi,\; \theta,\; \psi,\; f \,],
 \end{equation}
 a roll, pitch and yaw with a collective thrust $f$. An onboard controller at 500~Hz tracks $a$.
 
-The challenge is a ladder of difficulty levels. Level 0 has no disturbance. Level 1 randomizes the drone's inertial properties and its start pose. Level 2 also randomizes the gate and obstacle poses within bounds, revealed within the sensor range. Level 3 is the full setting, where the gate positions and the gate order are randomized at every reset and the controller must plan online. This is the setting we target. A fixed competition track (\texttt{final.toml}) is provided so that lap times compare across teams, and we report on it as well, but the controller is a general Level 3 policy that does not use the nominal layout of any track.
+The challenge is a ladder of difficulty levels that differ by which disturbances are active. Level 0 has no disturbance. The drone and the full track are known, so it measures raw speed. Level 1 randomizes the drone's inertial properties (mass and inertia) and its start pose, while the track stays known. Level 2 also randomizes the gate and obstacle poses within set bounds, revealed within the sensor range, on a layout that is otherwise fixed. Level 3 randomizes the layout itself, so the gate positions and the gate order change every run, which forces the controller to plan online in flight. This is the setting we target. The graded evaluation uses a separate configuration, \texttt{final.toml}, released in the last lab session. It keeps the drone and pose disturbances, up to 15~cm on each gate and obstacle revealed within 0.7~m, but it fixes the nominal gate and obstacle layout, so every group flies the same course and the lap times compare directly. We report on it as well, but our controller stays a general Level 3 policy. It does not read the nominal layout of any track, so even on the fixed course it runs the same blind search instead of exploiting the known geometry.
 
 Two features of the setting drive the design. The layout is unknown, so the controller cannot fly straight to a gate; it has to find it first. And a gate is seen late, so once the layout is known the racing stage still has to correct for the last few centimeters of a revealed pose within a short window.
 
@@ -86,7 +88,7 @@ Two features of the setting drive the design. The layout is unknown, so the cont
 \label{sec:method}
 
 \subsection{Overview}
-The controller runs three phases. A short takeoff climbs off the pad, then it enters the search and race loop of Fig.~\ref{fig:pipeline}. In the search phase it sweeps the arena and discovers the gates. In the race phase it hands the discovered gates to a time-optimal MPCC that flies through them and returns a world-frame acceleration, which an attitude stage turns into a thrust and attitude command. The loop runs at 50~Hz. Nothing in the controller reads the nominal layout, so the same phases run on any Level 3 track.
+The controller runs three phases. A short, aggressive launch, which we call the fast launch, climbs off the pad in a fixed brief window instead of a slow hover takeoff, then it enters the search and race loop of Fig.~\ref{fig:pipeline}. In the search phase it sweeps the arena and discovers the gates. In the race phase it hands the discovered gates to a time-optimal MPCC that flies through them and returns a world-frame acceleration, which an attitude stage turns into a thrust and attitude command. The loop runs at 50~Hz. Nothing in the controller reads the nominal layout, so the same phases run on any Level 3 track.
 
 \begin{figure}[t]
 \centering
@@ -120,18 +122,33 @@ As the drone's horizontal position comes within the 0.7~m sensor range of a gate
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[scale=1.0, font=\scriptsize]
-\draw[blue, thick] plot[domain=0:1010, samples=240, smooth] ({0.0017*\x*cos(\x)}, {0.0017*\x*sin(\x)});
-\node[blue] at (1.35,-1.75) {spiral sweep};
-\fill (0,0) circle (1.6pt); \node[below right] at (0,0) {start};
-\draw[red, very thick] (-1.42,0.78) -- (-1.12,1.02);
-\draw[red, very thick] (1.28,1.02) -- (1.55,0.78);
-\draw[red, very thick] (1.45,-0.85) -- (1.15,-1.02);
-\draw[red, very thick] (-0.95,-1.28) -- (-0.68,-1.06);
-\draw[gray, dashed] (-1.27,0.90) circle (0.5);
-\node[gray, align=center] at (-0.35,0.42) {revealed within\\ 0.7~m (2D)};
+\begin{tikzpicture}[scale=1.0, font=\scriptsize,
+  gate/.style={green!45!black, line width=2pt},
+  lead/.style={gray!65, line width=0.4pt}]
+  % Archimedean spiral sweep; the arrowhead marks the outward direction
+  \draw[blue, thick, -{Latex[length=1.4mm]}]
+        plot[domain=0:1010, samples=240, smooth]
+        ({0.0017*\x*cos(\x)}, {0.0017*\x*sin(\x)});
+  % start marker (star, matching the top-down figure)
+  \node[star, star point ratio=2.3, minimum size=6pt, inner sep=0pt,
+        fill=black, draw=black] at (0,0) {};
+  \node[anchor=north, inner sep=2.5pt] at (0.02,-0.14) {start};
+  % gates as green openings (same color convention as the racing-line figure)
+  \draw[gate] (-1.31,0.75) -- (-1.04,1.09);
+  \draw[gate] ( 1.32,0.55) -- ( 1.52,0.94);
+  \draw[gate] ( 0.86,-1.27) -- ( 1.18,-0.97);
+  \draw[gate] (-1.49,-0.70) -- (-1.31,-0.20);
+  % sensor reveal radius on one gate; the spiral crosses it, so the gate is found
+  \draw[gray, dashed] (1.42,0.74) circle (0.5);
+  % labels sit outside the swept disk with short leaders, so nothing overlaps
+  \node[gray, anchor=west] (rl) at (2.05,0.74) {0.7~m};
+  \draw[lead] (rl.west) -- (1.94,0.74);
+  \node[gate, anchor=east] (gl) at (-2.05,-0.45) {gate};
+  \draw[lead] (gl.east) -- (-1.44,-0.45);
+  \node[blue, anchor=north] (sl) at (0.15,-1.98) {spiral sweep};
+  \draw[lead] (sl.north) -- (0.42,-1.55);
 \end{tikzpicture}
-\caption{Blind gate search. The drone climbs above the obstacle poles and follows a fixed Archimedean spiral that covers the arena. Each gate (red) is revealed when the drone passes within 0.7~m of its center in the horizontal plane.}
+\caption{Blind gate search, seen from above. The drone climbs above the obstacle poles and follows a fixed Archimedean spiral that covers the arena. Each gate (green) is revealed when the spiral passes within 0.7~m of its center in the horizontal plane, drawn as the dashed circle on one gate.}
 \label{fig:spiral}
 \end{figure}
 
@@ -141,9 +158,9 @@ As the drone's horizontal position comes within the 0.7~m sensor range of a gate
 \begin{algorithmic}[1]
 \REQUIRE spiral curve, drone position $p$, discovered set $K$, gate count $n$
 \STATE follow the spiral with a PD law at the search speed and altitude
-\FORALL{gates $g$}
-    \IF{$g \notin K$ and $\lVert p_{xy} - g_{xy} \rVert < 0.7$}
-        \STATE $K \leftarrow K \cup \{g\}$ \quad (true pose revealed)
+\FORALL{gates $j$}
+    \IF{$j \notin K$ and $\lVert p_{xy} - j_{xy} \rVert < 0.7$}
+        \STATE $K \leftarrow K \cup \{j\}$ \quad (true pose revealed)
     \ENDIF
 \ENDFOR
 \IF{$|K| = n$ or the spiral is finished}
@@ -154,30 +171,30 @@ As the drone's horizontal position comes within the 0.7~m sensor range of a gate
 
 \subsection{Time-Optimal MPCC}
 \label{sec:mpcc}
-Once the gates are known the racing stage is a time-optimal Model Predictive Contouring Control problem \cite{mpcc,lam}. A planner fits a clamped cubic spline through the discovered gates, with two virtual columns per gate at the frame edges so the spline threads the opening center, and a keep-out radius around the obstacles. MPCC adds a progress variable $\theta$ that runs along this path and a progress rate $v_\theta$. The state is
+Once the gates are known the racing stage is a time-optimal Model Predictive Contouring Control problem \cite{mpcc,lam}. A planner fits a clamped cubic spline through the discovered gates, with two virtual columns per gate at the frame edges so the spline threads the opening center, and a keep-out radius around the obstacles. MPCC adds a progress variable $\xi$ that runs along this path and a progress rate $v_\xi$. The state is
 \begin{equation}
-x = [\, p^\top,\; v^\top,\; \theta,\; v_\theta \,]^\top,
+x = [\, p^\top,\; v^\top,\; \xi,\; v_\xi \,]^\top,
 \end{equation}
-with control acceleration $a$ and progress acceleration $u_\theta$ and a double-integrator model,
+with control acceleration $a$ and progress acceleration $u_\xi$ and a double-integrator model,
 \begin{equation}
-\dot p = v,\quad \dot v = a,\quad \dot\theta = v_\theta,\quad \dot v_\theta = u_\theta .
+\dot p = v,\quad \dot v = a,\quad \dot\xi = v_\xi,\quad \dot v_\xi = u_\xi .
 \end{equation}
-The reference is linearized around a predicted progress $\bar\theta$ with tangent $t(\bar\theta)$, and the path error splits into a lag part along the tangent and a contouring part across it (Fig.~\ref{fig:contour}),
+The reference is linearized around a predicted progress $\bar\xi$ with tangent $t(\bar\xi)$, and the path error splits into a lag part along the tangent and a contouring part across it (Fig.~\ref{fig:contour}),
 \begin{equation}
-e = p - \big(p_{\text{ref}}(\bar\theta) + t(\bar\theta)(\theta-\bar\theta)\big),\quad e_l = e^\top t,\quad e_c = e - e_l\,t .
+e = p - \big(p_{\text{ref}}(\bar\xi) + t(\bar\xi)(\xi-\bar\xi)\big),\quad e_l = e^\top t,\quad e_c = e - e_l\,t .
 \end{equation}
 The stage cost trades path accuracy against time,
 \begin{equation}
-\ell = q_c(\theta)\,\lVert e_c \rVert^2 + w_l\, e_l^2 - \mu\, v_\theta + w_a \lVert a \rVert^2 + r_v\, u_\theta^2 .
+\ell = q_c(\xi)\,\lVert e_c \rVert^2 + w_l\, e_l^2 - \mu\, v_\xi + w_a \lVert a \rVert^2 + r_v\, u_\xi^2 .
 \label{eq:cost}
 \end{equation}
-The term $-\mu\, v_\theta$ rewards progress, so the solver flies as fast as the constraints allow, and $q_c(\theta)$ is a per-stage weight (Section~\ref{sec:gateweight}). The actuator limits enter as constraints on the commanded thrust $f = a + g$,
+The term $-\mu\, v_\xi$ rewards progress, so the solver flies as fast as the constraints allow, and $q_c(\xi)$ is a per-stage weight (Section~\ref{sec:gateweight}). The actuator limits enter as constraints on the commanded thrust $f = a + g$,
 \begin{equation}
 \lVert f \rVert^2 \le a_{\max}^2, \quad f_z \ge a_{z,\min}, \quad (\kappa_t f_z)^2 \ge f_x^2 + f_y^2,
 \end{equation}
 the thrust magnitude, a minimum lift and a tilt limit. A friction-circle curvature cap completes the set,
 \begin{equation}
-v_{\text{curv}}(\theta) = \mathrm{clip}\!\left(\sqrt{a_{\text{lat}}/\kappa(\theta)},\; v_{\min},\; v_{\max}\right),
+v_{\text{curv}}(\xi) = \mathrm{clip}\!\left(\sqrt{a_{\text{lat}}/\kappa(\xi)},\; v_{\min},\; v_{\max}\right),
 \label{eq:curv}
 \end{equation}
 which soft-bounds the speed and the progress rate. We solve the program in real time with acados \cite{acados} using a sequential quadratic programming real-time iteration \cite{rti}, with the quadratic programs handled by HPIPM \cite{hpipm}. The horizon is 18 steps at 0.05~s, and the first acceleration of the horizon is the command.
@@ -189,7 +206,7 @@ which soft-bounds the speed and the progress rate. We solve the program in real 
 \node[blue] at (6.1,1.45) {path};
 \coordinate (pr) at (3.05,0.86);
 \coordinate (dr) at (3.7,1.75);
-\fill (pr) circle (1.4pt); \node[below] at (pr) {$p_{\text{ref}}(\bar\theta)$};
+\fill (pr) circle (1.4pt); \node[below] at (pr) {$p_{\text{ref}}(\bar\xi)$};
 \fill[red] (dr) circle (1.6pt); \node[right] at (dr) {$p$ (drone)};
 \draw[-{Latex[length=1.6mm]}] (pr) -- ++(1.4,0.42) node[pos=1.0, right] {$t$};
 \draw[dashed, gray] (pr) -- (dr);
@@ -205,27 +222,54 @@ which soft-bounds the speed and the progress rate. We solve the program in real 
 \label{sec:gateweight}
 A single contouring weight is wrong somewhere on the track. High everywhere brakes the vehicle on the straights, and low everywhere lets it drift at a gate, where a drift is a miss. We make the weight a function of progress,
 \begin{equation}
-q_c(\theta) = q_{\text{base}} + q_{\text{gate}} \sum_g \exp\!\left(-\frac{(s(\theta)-s_g)^2}{2\sigma^2}\right),
+q_c(\xi) = q_{\text{base}} + q_{\text{gate}} \sum_j \exp\!\left(-\frac{(s(\xi)-s_j)^2}{2\sigma^2}\right),
 \label{eq:weight}
 \end{equation}
-with $s_g$ the arc position of gate $g$ and $\sigma$ the window width. The weight is low between gates and peaks at each gate, shown in Fig.~\ref{fig:weight}. The vehicle is held on the line where a gate must be threaded and runs free elsewhere, which lets the speed rise without a drop in the gate pass rate.
+with $s_j$ the arc position of gate $j$ and $\sigma$ the window width. The weight is low between gates and peaks at each gate, shown in Fig.~\ref{fig:weight}. The vehicle is held on the line where a gate must be threaded and runs free elsewhere, which lets the speed rise without a drop in the gate pass rate.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{gate_weight.png}
-\caption{The gate-aware contouring weight along the track, from simulation. The weight sits at a low base on the straights and rises to a peak at each gate, as in \eqref{eq:weight}, so tracking is stiff only where a gate is threaded.}
+\begin{tikzpicture}[x=1cm,y=1cm,every node/.style={font=\scriptsize}]
+  % gate guide lines and labels
+  \foreach \gx/\gl in {1.88/G1, 2.53/G2, 4.90/G3, 6.27/G4}{%
+    \draw[green!45!black,dotted] (\gx,0) -- (\gx,3.05);
+    \node[green!45!black,anchor=south] at (\gx,2.95) {\gl};
+  }
+  % baseline
+  \draw[gray,dashed] (0,1.2) -- (7,1.2);
+  % axes
+  \draw[-{Latex[length=1.6mm]}] (0,0) -- (7.3,0);
+  \draw[-{Latex[length=1.6mm]}] (0,0) -- (0,3.35);
+  % y ticks
+  \draw (0,1.2) -- (-0.08,1.2) node[anchor=east] {20};
+  \draw (0,2.4) -- (-0.08,2.4) node[anchor=east] {40};
+  \node[anchor=east] at (-0.08,0) {0};
+  % x ticks
+  \node[anchor=north] at (0,-0.05) {0};
+  \node[anchor=north] at (7,-0.05) {9.6};
+  % axis labels
+  \node[anchor=north] at (3.5,-0.35) {arc length along the track $s$ [m]};
+  \node[rotate=90,anchor=south] at (-0.62,1.65) {contouring weight $q_c(\xi)$};
+  % weight schedule q_c(xi) = q_base + q_gate * sum_j exp(-(s(xi)-s_j)^2 / 2 sigma^2)
+  \draw[very thick,blue!55!black] plot coordinates {(0.000,1.200) (0.100,1.200) (0.200,1.200) (0.300,1.200) (0.400,1.200) (0.500,1.201) (0.600,1.203) (0.700,1.206) (0.800,1.215) (0.900,1.232) (1.000,1.265) (1.100,1.322) (1.200,1.412) (1.300,1.542) (1.400,1.713) (1.500,1.918) (1.600,2.139) (1.700,2.350) (1.800,2.530) (1.900,2.664) (2.000,2.749) (2.100,2.793) (2.200,2.807) (2.300,2.796) (2.400,2.756) (2.500,2.677) (2.600,2.549) (2.700,2.374) (2.800,2.165) (2.900,1.945) (3.000,1.737) (3.100,1.561) (3.200,1.425) (3.300,1.331) (3.400,1.271) (3.500,1.236) (3.600,1.218) (3.700,1.212) (3.800,1.215) (3.900,1.229) (4.000,1.258) (4.100,1.309) (4.200,1.391) (4.300,1.511) (4.400,1.670) (4.500,1.859) (4.600,2.057) (4.700,2.234) (4.800,2.357) (4.900,2.401) (5.000,2.357) (5.100,2.237) (5.200,2.068) (5.300,1.888) (5.400,1.734) (5.500,1.634) (5.600,1.607) (5.700,1.657) (5.800,1.775) (5.900,1.941) (6.000,2.121) (6.100,2.279) (6.200,2.379) (6.300,2.397) (6.400,2.328) (6.500,2.186) (6.600,1.999) (6.700,1.801) (6.800,1.619) (6.900,1.471) (7.000,1.362)};
+\end{tikzpicture}
+\caption{The gate-aware contouring weight along the track, computed from \eqref{eq:weight} for the competition layout. The weight sits at a low base on the straights and rises to a peak at each gate (G1 to G4), so tracking is stiff only where a gate must be threaded. Gates whose arc positions fall within the window merge into a single wider peak.}
 \label{fig:weight}
 \end{figure}
 
 \subsection{Dynamics-Aware Progress Anchor}
 \label{sec:anchor}
-The MPCC needs a value of the progress $\theta$ each step. The direct choice, the arc length of the nearest path point, fails at a hairpin, where the path folds back and a far leg comes close in space, so the nearest-point search jumps to it and skips a gate. We anchor the progress to the solver's own predicted progress one step ahead, which advances at the bounded rate $v_\theta$ and cannot jump, and correct it with a nearest-point search limited to a band around the prediction. The far leg of a fold lies outside the band and is never selected, while the gate motion lies inside it. The anchor removes the fold skip without changing tracking elsewhere.
+The MPCC needs a value of the progress $\xi$ each step. The direct choice, the arc length of the nearest path point, fails at a hairpin, where the path folds back and a far leg comes close in space, so the nearest-point search jumps to it and skips a gate. We anchor the progress to the solver's own predicted progress one step ahead, which advances at the bounded rate $v_\xi$ and cannot jump, and correct it with a nearest-point search limited to a band around the prediction. The far leg of a fold lies outside the band and is never selected, while the gate motion lies inside it. The anchor removes the fold skip without changing tracking elsewhere.
+
+\subsection{Two Settings}
+\label{sec:settings}
+We use two settings of the same controller. Both run the same blind search and the same MPCC, and neither reads the nominal layout, so the difference is aggressiveness and not method. The robust setting is for randomized Level 3. It keeps a moderate speed budget so that it finishes on as many random draws as possible. The fast setting is more aggressive. It raises the MPCC speed budget and tightens the search, so it reaches the gates sooner and races them harder. On Level 3 it cuts the lap time by about a third, from 18.8~s to 12.8~s, at a small cost in success rate. The two settings differ only in these parameters, so this is an aggressiveness choice and not a change of method. Table~\ref{tab:results} reports both settings.
 
 \section{Evaluation and Results}
 \label{sec:results}
 
 \subsection{Setup}
-We evaluate the controller on randomized Level 3 tracks with the level 3 evaluation script, and on the fixed competition track (\texttt{final.toml}) with the provided seed. Fig.~\ref{fig:racingline} shows a lap on the fixed track. Both settings use at least 20 runs. The controller reads no nominal layout in either case, and the search parameters and the MPCC weights are shared across all tracks. Table~\ref{tab:params} lists the main parameters.
+We evaluate the controller on randomized Level 3 tracks with the Level 3 evaluation script, and on the fixed competition track (\texttt{final.toml}) with the provided seed. Fig.~\ref{fig:racingline} shows a lap on the fixed track. Both settings use at least 20 runs. The controller reads no nominal layout in either case, and the search parameters and the MPCC weights are shared across all tracks. Table~\ref{tab:params} lists the main parameters.
 
 \begin{table}[htbp]
 \caption{Main parameters}
@@ -258,27 +302,29 @@ Control rate & 50~Hz \\
 \end{table}
 
 \subsection{Main Result}
-Table~\ref{tab:results} reports the controller on both settings. On randomized Level 3 it finishes 12 of 20 runs at a lap time near 17.6~s. On the fixed competition track it finishes all 20 runs at 25.8~s. The success rate is higher on the fixed track because its layout is feasible on every draw, while the randomized draws sometimes place gates and obstacles in tight or crossing configurations that the racing stage cannot thread. The lap time is longer on the fixed track than a known-track racer would need, because the controller still runs the full search before it races.
+Table~\ref{tab:results} reports the controller across settings and tracks. On randomized Level 3 the robust setting finishes 12 of 20 runs at a lap time of 18.8~s. The fast setting raises the speed budget and tightens the search, and it cuts the lap time to 12.8~s at 10 of 20 runs. The fast setting trades about ten points of success for roughly a third off the lap time, which is the aggressiveness dial at work. On the fixed competition track the robust setting finishes all 20 runs at 25.8~s. The success rate is higher there because the fixed layout is feasible on every draw, while the randomized draws sometimes place gates and obstacles in tight or crossing configurations that the racing stage cannot thread.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.47\textwidth]{mpcc_racing_2d.png}
+\includegraphics[width=0.53\textwidth]{fig_topdown.png}
 \hfill
-\includegraphics[width=0.47\textwidth]{mpcc_racing_3d.png}
-\caption{A lap on the fixed competition track (\texttt{final.toml}), from the simulator, after the gates were discovered by the search. Left: seen top down and colored by speed, slow (blue to green) through the gates and the tight turns and fast (orange to red) on the straights. Green bars are the gate openings with the crossing direction, red marks are obstacles with their keep-out and the star is the start. Right: the same line in three dimensions, where the gates sit at two heights so it climbs and descends.}
+\includegraphics[width=0.46\textwidth]{fig_3d.png}
+\caption{A run on the fixed competition track (\texttt{final.toml}), from the simulator, colored by speed. Left, top-down: the wide loops are the blind spiral search that covers the arena; once all four gates are found the drone races them, slow (blue to green) at the gates and tight turns and fast (orange to red) on the straights. Green bars are the gate openings with the crossing direction, red marks are obstacles with their keep-out and the star is the start. Right, three-dimensional: the search spiral runs high, above the obstacle poles, then the drone descends to race the gates.}
 \label{fig:racingline}
 \end{figure*}
 
 \begin{table}[htbp]
-\caption{The controller on both settings (at least 20 runs each)}
+\caption{The controller across settings and tracks (at least 20 runs each)}
 \begin{center}
-\begin{tabular}{|l|c|c|}
+\begin{tabular}{|l|l|c|c|}
 \hline
-\textbf{Setting} & \textbf{Success} & \textbf{Lap (s)} \\
+\textbf{Setting} & \textbf{Track} & \textbf{Success} & \textbf{Lap (s)} \\
 \hline
-Randomized Level 3 & 12/20 & 17.65 \\
+Robust & \texttt{level3.toml} (random) & 12/20 & 18.83 \\
 \hline
-Fixed competition track (\texttt{final.toml}) & 20/20 & 25.78 \\
+Fast & \texttt{level3.toml} (random) & 10/20 & 12.81 \\
+\hline
+Robust & \texttt{final.toml} (fixed) & 20/20 & 25.78 \\
 \hline
 \end{tabular}
 \label{tab:results}
@@ -286,10 +332,17 @@ Fixed competition track (\texttt{final.toml}) & 20/20 & 25.78 \\
 \end{table}
 
 \subsection{The Price of Search}
-The lap time is dominated by the search, not by the racing. The spiral has to cover the arena before every gate is seen, and this takes on the order of 15~s on the fixed track. The racing itself, once the gates are known, takes only a few seconds. This is why the controller reaches 25.8~s on a track that a known-track racer flies in under 10~s. The gain in return is generality. Because the search never reads the nominal layout, the same controller runs on any Level 3 draw, which is what the setting asks for.
+The lap time is dominated by the search, not by the racing. The spiral has to cover the arena before every gate is seen, and this takes on the order of 20~s on the fixed track. The racing itself, once the gates are known, takes only a few seconds. Fig.~\ref{fig:speed} shows this split in the speed trace: a long low-speed sweep while the arena is covered, then a short fast burst through the four gates. This is why the controller reaches 25.8~s on a track that a known-track racer flies in under 10~s. The gain in return is generality. Because the search never reads the nominal layout, the same controller runs on any Level 3 draw, which is what the setting asks for.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_speed.png}
+\caption{Speed against time on the fixed competition track. The long low-speed section is the blind spiral search covering the arena, and the short high-speed section is the race through the four discovered gates. The search, not the racing, sets the lap time.}
+\label{fig:speed}
+\end{figure}
 
 \subsection{Racing-Core Robustness}
-Table~\ref{tab:ablation} isolates the three robustness components of the racing stage on a development track, over 60 runs. The gate-aware contouring weight lets the raised speed hold the gates. The fast launch cuts the start phase. The dynamics-aware progress anchor removes the fold skip on sharp-slalom variants, which the plain nearest-point projection cannot, at a small time cost. Each component targets a distinct failure and composes with the others.
+Table~\ref{tab:ablation} isolates the three components we add to the racing core, on a development track with the gates known and no search stage, over 60 runs. This is why the laps here are near 8~s and not the 18 to 26~s of the full runs. The gate-aware contouring weight lets the raised speed hold the gates. The fast launch cuts the start phase. The dynamics-aware progress anchor costs a little time on this track, but it removes the fold skip on sharp-slalom draws that the plain nearest-point projection cannot handle, and this development track does not exercise those draws. Each component targets a distinct failure and composes with the others.
 
 \begin{table}[htbp]
 \caption{Racing-core component effect on a development track (60 runs)}
@@ -316,14 +369,14 @@ The controller separates two problems. Finding the gates is handled by a blind s
 \label{sec:process}
 The controller is the result of several iterations, and the search stage was the last piece. We first built a global planner that fits a spline through the gates and a time-optimal MPCC that races it. On a known track this races fast. We pushed an aggressive configuration of the racing core to the actuator limit, raising the progress reward, the top speed, the lateral budget and the tilt limit. We flew that aggressive configuration on the real Crazyflie and completed the fixed competition track in 9.55~s, which validated the racing core on hardware.
 
-That fast configuration, however, reads the gate positions and so only works when the layout is known. The open problem was the full Level 3 setting, where the layout is random. We therefore added the blind gate search in front of the same racing core. The search discovers the gates without the nominal positions, and the racing core then flies them. The submitted controller pays a fixed search cost on every track, including the fixed one, in exchange for working on any Level 3 layout. The aggressive real flight and the general search-based controller share the same racing engine, so the hardware result also validates the core of the submitted controller.
+That fast configuration, however, reads the gate positions and so only works when the layout is known. The open problem was the full Level 3 setting, where the layout is random. We therefore added the blind gate search in front of the same racing core. The search discovers the gates without the nominal positions, and the racing core then flies them. The submitted controller pays a fixed search cost on every track, including the fixed one, in exchange for working on any Level 3 layout. We keep two settings of it, a robust one and a faster, more aggressive one, which is the same progression from safe to fast that we followed on the racing core. The aggressive real flight and the general search-based controller share the same racing engine, so the hardware result also validates the core of the submitted controller.
 
 \section{Limitations and Future Work}
 \label{sec:limits}
 The main cost is the blind search. Even on a track whose layout is close to nominal, the controller flies the full sweep, which dominates the lap time. A hybrid that starts from the nominal positions and searches only where a gate is not found would remove most of that cost on the fixed track while keeping the fallback for the random case. The search altitude and speed trade coverage against time, and a tighter or faster sweep would find the gates sooner. On randomized tracks the misses come from draws that place gates and obstacles too close to thread, which is a property of the layout rather than the controller. Future work is an adaptive search that uses a nominal prior when one is available, and a reveal-aware racing law that shrinks the last-meter correction at a gate.
 
 \section{Conclusion}
-We presented a general Level 3 controller for autonomous drone racing under randomized layouts. It finds the gates with a blind spiral sweep that does not use the nominal positions, then races them with a time-optimal MPCC that makes speed an output. A gate-aware contouring weight and a dynamics-aware progress anchor keep the racing stage reliable. The controller finishes 12 of 20 runs on randomized Level 3 at 17.6~s and all 20 runs on the fixed competition track at 25.8~s. Its racing core is the same one we flew on the real drone at 9.55~s in a fast known-track configuration. The design trades lap time for generality, which is the trade the full Level 3 setting demands.
+We presented a general Level 3 controller for autonomous drone racing under randomized layouts. It finds the gates with a blind spiral sweep that does not use the nominal positions, then races them with a time-optimal MPCC that makes speed an output. A gate-aware contouring weight and a dynamics-aware progress anchor keep the racing stage reliable. The controller finishes 12 of 20 runs on randomized Level 3 at 18.8~s and all 20 runs on the fixed competition track at 25.8~s. Its racing core is the same one we flew on the real drone at 9.55~s in a fast known-track configuration. The design trades lap time for generality, which is the trade the full Level 3 setting demands.
 
 \appendices
 \section{Reproducibility}
