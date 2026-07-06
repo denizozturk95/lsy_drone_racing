@@ -1,8 +1,8 @@
 """Render the 4-panel flight report for a controller on a track.
 
-Flies one episode (default: controller_v10_5_max on final.toml), logs the flown
+Flies one episode (default: controller_v24_r10_fast on final.toml), logs the flown
 trajectory + measured speed, and produces the same four figures we made for
-controller_v27:
+controller_v24_r10_fast:
 
     fig_3d.png       flown racing line in 3D, colored by speed
     fig_topdown.png  top-down racing line + gates, obstacles, crossing arrows
@@ -10,7 +10,7 @@ controller_v27:
     fig_montage.png  2x3 MuJoCo renders through the flight (green = live plan)
 
     $ python scripts/flight_report.py
-    $ python scripts/flight_report.py --controller controller_v27.py --config final.toml
+    $ python scripts/flight_report.py --controller controller_v24_r10_fast.py --config final.toml
 
 Everything is the *flown* trajectory (measured pos/vel), so it works for any
 controller without reaching into its internal planner.
