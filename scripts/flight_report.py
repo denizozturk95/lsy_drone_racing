@@ -132,7 +132,7 @@ def _colored_line_2d(ax, x, y, c, norm):
     return lc
 
 
-def _plot_topdown(traj, title, path):
+def _plot_topdown(traj, path):
     x, y = traj["pos"][:, 0], traj["pos"][:, 1]
     norm = plt.Normalize(0, traj["spd"].max())
     fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
@@ -162,7 +162,6 @@ def _plot_topdown(traj, title, path):
     ax.set_aspect("equal")
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
-    ax.set_title(title, fontsize=11)
     ax.margins(0.12)
     fig.savefig(path, dpi=200)
     plt.close(fig)
@@ -181,7 +180,7 @@ def _crossing_dir(traj, gate_idx):
     return v / n if n > 1e-9 else np.array([1.0, 0.0])
 
 
-def _plot_3d(traj, title, path):
+def _plot_3d(traj, path):
     p, sp = traj["pos"], traj["spd"]
     z = p[:, 2]
     k = int(np.argmax(z > 0.2)) if (z > 0.2).any() else 0  # drop the ground-level takeoff climb
@@ -214,12 +213,11 @@ def _plot_3d(traj, title, path):
     ax.set_zlabel("z (m)")
     ax.set_zlim(0, max(1.6, p[:, 2].max() + 0.2))
     ax.view_init(elev=22, azim=-61)
-    ax.set_title(title, fontsize=11)
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
-def _plot_speed(traj, title, path):
+def _plot_speed(traj, path):
     t, s = traj["t"], traj["spd"]
     fig, ax = plt.subplots(figsize=(9, 4.5), constrained_layout=True)
     ax.fill_between(t, s, alpha=0.18, color="steelblue")
@@ -233,13 +231,12 @@ def _plot_speed(traj, title, path):
     ax.set_ylabel("speed (m/s)")
     ax.set_xlim(t[0], t[-1])
     ax.set_ylim(0, s.max() * 1.12)
-    ax.set_title(title, fontsize=12, fontweight="bold")
     ax.grid(alpha=0.25)
     fig.savefig(path, dpi=200)
     plt.close(fig)
 
 
-def _plot_montage(traj, title, path, cols=3):
+def _plot_montage(traj, path, cols=3):
     frames = traj["montage"]
     rows = int(np.ceil(len(frames) / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 2.3 * rows), constrained_layout=True)
@@ -250,7 +247,6 @@ def _plot_montage(traj, title, path, cols=3):
         ax.axis("off")
     for ax in np.ravel(axes)[len(frames):]:
         ax.axis("off")
-    fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
@@ -284,21 +280,14 @@ def report(
     out_dir = Path(__file__).parents[1] / out
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    name = controller.replace(".py", "")
     lap = traj["lap"]
     peak = traj["spd"].max()
-    ng, no = len(traj["gates"]), len(traj["obstacles"])
     end = "finished" if traj["finished"] else "CRASHED"
 
-    _plot_3d(traj, f"{config} - {name} flown racing line (3D)",
-             out_dir / "fig_3d.png")
-    _plot_topdown(traj, f"{config} - {name} flown racing line\n"
-                        f"top-down | lap {lap:.2f}s ({end}) | {ng} gates, {no} obstacles",
-                  out_dir / "fig_topdown.png")
-    _plot_speed(traj, f"Flown speed profile | lap {lap:.2f}s | peak {peak:.2f} m/s",
-                out_dir / "fig_speed.png")
-    _plot_montage(traj, f"{name} flying the track (MuJoCo render, green = live plan)",
-                  out_dir / "fig_montage.png")
+    _plot_3d(traj, out_dir / "fig_3d.png")
+    _plot_topdown(traj, out_dir / "fig_topdown.png")
+    _plot_speed(traj, out_dir / "fig_speed.png")
+    _plot_montage(traj, out_dir / "fig_montage.png")
 
     logger.info("Wrote 4 figures to %s (lap %.2fs, %s, peak %.2f m/s, attempt %d)",
                 out_dir, lap, end, peak, traj.get("attempt", 1))
