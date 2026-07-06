@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from gymnasium.wrappers.jax_to_numpy import JaxToNumpy
 from matplotlib.collections import LineCollection
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from PIL import Image
 
@@ -135,9 +136,8 @@ def _colored_line_2d(ax, x, y, c, norm):
 def _plot_topdown(traj, path):
     x, y = traj["pos"][:, 0], traj["pos"][:, 1]
     norm = plt.Normalize(0, traj["spd"].max())
-    fig, ax = plt.subplots(figsize=(8, 7), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(8, 7))
     lc = _colored_line_2d(ax, x, y, traj["spd"], norm)
-    fig.colorbar(lc, ax=ax, label="speed (m/s)")
 
     for j, o in enumerate(traj["obstacles"]):
         ax.add_patch(plt.Circle((o[0], o[1]), 0.3, fill=False, ls=":", color="0.5"))
@@ -152,7 +152,7 @@ def _plot_topdown(traj, path):
                 color="seagreen", lw=5, solid_capstyle="round")
         ax.annotate("", xy=(g[0] + vhat[0] * 0.45, g[1] + vhat[1] * 0.45), xytext=(g[0], g[1]),
                     arrowprops=dict(arrowstyle="-|>", color="black", lw=1.4))
-        ax.annotate(f"G{j + 1}  {g[2]:.2f}m", (g[0], g[1]), fontsize=9, fontweight="bold",
+        ax.annotate(f"G{j + 1}", (g[0], g[1]), fontsize=9, fontweight="bold",
                     color="seagreen", ha="center", va="top", xytext=(0, -8),
                     textcoords="offset points")
 
@@ -163,7 +163,10 @@ def _plot_topdown(traj, path):
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.margins(0.12)
-    fig.savefig(path, dpi=200)
+    # Colorbar locked to the (aspect-equal) map height, not the full axes bbox.
+    cax = make_axes_locatable(ax).append_axes("right", size="4%", pad=0.15)
+    fig.colorbar(lc, cax=cax, label="speed (m/s)")
+    fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
 
