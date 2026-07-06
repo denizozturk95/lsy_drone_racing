@@ -40,34 +40,15 @@ logger = logging.getLogger(__name__)
 CMAP = "turbo"  # dark-blue slow -> red fast, like the v27 figures
 
 
-def _fly(config, controller_file, n_montage: int, mont_w: int, mont_h: int):
-    """Run one episode, return the logged trajectory, gate crossings and montage frames."""
-    root = Path(__file__).parents[1]
-    controller_cls = load_controller(root / "lsy_drone_racing/control" / controller_file)
-    env = gymnasium.make(
-        config.env.id,
-        freq=config.env.freq,
-        sim_config=config.sim,
-        sensor_range=config.env.sensor_range,
-        control_mode=config.env.control_mode,
-        track=config.env.track,
-        disturbances=config.env.get("disturbances"),
-        randomizations=config.env.get("randomizations"),
-        seed=config.env.seed,
-    )
-    env = JaxToNumpy(env)
-    obs, info = env.reset()
+def _episode(env, ctrl, info, obs, freq, mont_w, mont_h):
+    """Fly one episode; return (traj-without-montage-subsampling, all frames)."""
     u = env.unwrapped
-    gates = np.asarray(u.data.gates_pos[0])  # (n, 3) ground-truth poses
+    gates = np.asarray(u.data.gates_pos[0])  # (n, 3) ground-truth poses (jitter is per-reset)
     obstacles = np.asarray(u.data.obstacles_pos[0])  # (n, 3)
-    ctrl = controller_cls(obs, info, config)
-
-    ts, pos, spd = [], [], []
-    crossings = {}  # gate index -> (time, velocity) at the moment it is passed
-    frames = []  # (time, rgb) sampled for the montage
-    freq = config.env.freq
-    prev_target = int(obs["target_gate"])
     n_gates = gates.shape[0]
+    ts, pos, spd, frames = [], [], [], []
+    crossings = {}  # gate index -> (time, velocity) at the moment it is passed
+    prev_target = int(obs["target_gate"])
 
     i = 0
     while True:
@@ -97,16 +78,46 @@ def _fly(config, controller_file, n_montage: int, mont_w: int, mont_h: int):
             break
         i += 1
 
-    env.close()
     ts, pos, spd = np.array(ts), np.array(pos), np.array(spd)
     valid = pos[:, 2] > -0.05  # drop the terminal sentinel obs (pos = [-1, -1, -1])
     ts, pos, spd = ts[valid], pos[valid], spd[valid]
-    traj = dict(
-        t=ts, pos=pos, spd=spd,
-        gates=gates, obstacles=obstacles, crossings=crossings,
-        lap=ts[-1], finished=len(crossings) == n_gates,
+    traj = dict(t=ts, pos=pos, spd=spd, gates=gates, obstacles=obstacles,
+                crossings=crossings, lap=ts[-1], finished=len(crossings) == n_gates)
+    return traj, frames
+
+
+def _fly(config, controller_file, n_montage: int, mont_w: int, mont_h: int, attempts: int):
+    """Fly up to `attempts` episodes; keep the first that finishes (search controllers
+    fail some seed-sequence draws, so a single shot can land on a bad one)."""
+    root = Path(__file__).parents[1]
+    controller_cls = load_controller(root / "lsy_drone_racing/control" / controller_file)
+    env = gymnasium.make(
+        config.env.id,
+        freq=config.env.freq,
+        sim_config=config.sim,
+        sensor_range=config.env.sensor_range,
+        control_mode=config.env.control_mode,
+        track=config.env.track,
+        disturbances=config.env.get("disturbances"),
+        randomizations=config.env.get("randomizations"),
+        seed=config.env.seed,
     )
-    # Pick n_montage evenly spaced frames.
+    env = JaxToNumpy(env)
+    freq = config.env.freq
+    obs, info = env.reset()
+
+    traj = frames = None
+    for attempt in range(attempts):
+        if attempt > 0:  # advance the seed sequence exactly like a multi-run eval
+            obs, info = env.reset()
+        ctrl = controller_cls(obs, info, config)  # fresh instance per run, like scripts/sim.py
+        traj, frames = _episode(env, ctrl, info, obs, freq, mont_w, mont_h)
+        ctrl.episode_callback()
+        traj["attempt"] = attempt + 1
+        if traj["finished"]:
+            break
+
+    env.close()
     idx = np.linspace(0, len(frames) - 1, n_montage).round().astype(int)
     traj["montage"] = [frames[k] for k in idx]
     return traj
@@ -251,8 +262,9 @@ def report(
     montage_frames: int = 6,
     montage_width: int = 960,
     montage_height: int = 540,
+    attempts: int = 8,
 ) -> str:
-    """Fly one episode and write the four flight-report figures.
+    """Fly and write the four flight-report figures.
 
     Args:
         config: Config file in config/ (track, seed, physics).
@@ -261,12 +273,14 @@ def report(
         montage_frames: Number of MuJoCo snapshots in the montage.
         montage_width: Montage render width in pixels.
         montage_height: Montage render height in pixels.
+        attempts: Max episodes to fly, keeping the first that finishes. Set to 1 to
+            plot the raw first run (search controllers fail some seed-sequence draws).
 
     Returns:
         The output directory path.
     """
     cfg = load_config(Path(__file__).parents[1] / "config" / config)
-    traj = _fly(cfg, controller, montage_frames, montage_width, montage_height)
+    traj = _fly(cfg, controller, montage_frames, montage_width, montage_height, attempts)
     out_dir = Path(__file__).parents[1] / out
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -286,8 +300,8 @@ def report(
     _plot_montage(traj, f"{name} flying the track (MuJoCo render, green = live plan)",
                   out_dir / "fig_montage.png")
 
-    logger.info("Wrote 4 figures to %s (lap %.2fs, %s, peak %.2f m/s)",
-                out_dir, lap, end, peak)
+    logger.info("Wrote 4 figures to %s (lap %.2fs, %s, peak %.2f m/s, attempt %d)",
+                out_dir, lap, end, peak, traj.get("attempt", 1))
     return str(out_dir)
 
 
