@@ -52,6 +52,8 @@ INPUT /usr/local/texlive/2026/texmf-dist/fonts/tfm/adobe/times/ptmri7t.tfm
 INPUT /usr/local/texlive/2026/texmf-dist/fonts/tfm/adobe/times/ptmbi7t.tfm
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/cite/cite.sty
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/cite/cite.sty
+INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/url/url.sty
+INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/url/url.sty
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty
 INPUT /usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsopn.sty

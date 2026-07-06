@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.7)  6 JUL 2026 18:38
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.7)  6 JUL 2026 18:47
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -122,6 +122,10 @@ LaTeX Info: Redefining \cite on input line 302.
 LaTeX Info: Redefining \nocite on input line 332.
 Package: cite 2015/02/27  v 5.5
 )
+(/usr/local/texlive/2026/texmf-dist/tex/latex/url/url.sty
+\Urlmuskip=\muskip17
+Package: url 2013/09/16  ver 3.4  Verb mode for urls, etc.
+)
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty
 Package: amsmath 2025/07/09 v2.17z AMS math features
 \@mathmargin=\skip52
@@ -169,7 +173,7 @@ LaTeX Info: Redefining \smash on input line 939.
 LaTeX Info: Redefining \relbar on input line 969.
 LaTeX Info: Redefining \Relbar on input line 970.
 \c@MaxMatrixCols=\count296
-\dotsspace@=\muskip17
+\dotsspace@=\muskip18
 \c@parentequation=\count297
 \dspbrk@lvl=\count298
 \tag@help=\toks19
@@ -583,20 +587,20 @@ File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
 (./report_v4.aux)
 \openout1 = `report_v4.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 25.
-LaTeX Font Info:    ... okay on input line 25.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 26.
+LaTeX Font Info:    ... okay on input line 26.
 
 -- Lines per column: 56 (exact).
 (/usr/local/texlive/2026/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
@@ -621,21 +625,21 @@ Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
 File: epstopdf-sys.cfg 2010/07/13 v1.3 Configuration of (r)epstopdf for TeX Liv
 e
 ))
-LaTeX Font Info:    Calculating math sizes for size <11> on input line 42.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 42.
+LaTeX Font Info:    Calculating math sizes for size <11> on input line 43.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 43.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 42.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 43.
 
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 )
 LaTeX Font Info:    Trying to load font information for OT1+pcr on input line 4
-5.
+6.
 
 (/usr/local/texlive/2026/texmf-dist/tex/latex/psnfss/ot1pcr.fd
 File: ot1pcr.fd 2001/06/04 font definitions for OT1/pcr.
@@ -650,17 +654,17 @@ local/texlive/2026/texmf-dist/fonts/enc/dvips/base/8r.enc}
 <figs_v24_r10/fig_topdown.png, id=33, 544.9158pt x 342.92114pt>
 File: figs_v24_r10/fig_topdown.png Graphic file (type png)
 <use figs_v24_r10/fig_topdown.png>
-Package pdftex.def Info: figs_v24_r10/fig_topdown.png  used on input line 342.
+Package pdftex.def Info: figs_v24_r10/fig_topdown.png  used on input line 343.
 (pdftex.def)             Requested size: 273.47937pt x 172.10374pt.
 <figs_v24_r10/fig_3d.png, id=35, 320.8788pt x 247.52475pt>
 File: figs_v24_r10/fig_3d.png Graphic file (type png)
 <use figs_v24_r10/fig_3d.png>
-Package pdftex.def Info: figs_v24_r10/fig_3d.png  used on input line 344.
+Package pdftex.def Info: figs_v24_r10/fig_3d.png  used on input line 345.
 (pdftex.def)             Requested size: 237.36346pt x 183.10123pt.
 <figs_v24_r10/fig_speed.png, id=36, 650.43pt x 325.215pt>
 File: figs_v24_r10/fig_speed.png Graphic file (type png)
 <use figs_v24_r10/fig_speed.png>
-Package pdftex.def Info: figs_v24_r10/fig_speed.png  used on input line 376.
+Package pdftex.def Info: figs_v24_r10/fig_speed.png  used on input line 377.
 (pdftex.def)             Requested size: 252.0pt x 125.99965pt.
  [4] [5 <./figs_v24_r10/fig_topdown.png> <./figs_v24_r10/fig_3d.png> <./figs_v2
 4_r10/fig_speed.png>]
@@ -682,13 +686,13 @@ L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 16276 strings out of 467525
- 332614 string characters out of 5418983
- 845462 words of memory out of 5000000
- 44913 multiletter control sequences out of 15000+600000
+ 16360 strings out of 467525
+ 333793 string characters out of 5418983
+ 846593 words of memory out of 5000000
+ 44993 multiletter control sequences out of 15000+600000
  674424 words of font info for 135 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 84i,13n,94p,1687b,827s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 84i,13n,94p,1687b,829s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb
 ></usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb>
 </usr/local/texlive/2026/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></
@@ -708,7 +712,7 @@ t/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/ty
 pe1/urw/times/utmbi8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/t
 imes/utmr8a.pfb></usr/local/texlive/2026/texmf-dist/fonts/type1/urw/times/utmri
 8a.pfb>
-Output written on report_v4.pdf (6 pages, 645148 bytes).
+Output written on report_v4.pdf (6 pages, 645275 bytes).
 PDF statistics:
  129 PDF objects out of 1000 (max. 8388607)
  76 compressed objects within 1 object stream
