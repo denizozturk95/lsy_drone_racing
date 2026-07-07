@@ -106,8 +106,6 @@ def simulate(
                 if ((i * fps) % config.env.freq) < fps:
                     try:
                         env.render()
-                    # TODO: JaxToNumpy not working with None (returned by env.render()). Open issue
-                    # in gymnasium and fix this.
                     except Exception as e:
                         if not e.args[0].startswith("No known conversion for Jax type"):
                             raise e

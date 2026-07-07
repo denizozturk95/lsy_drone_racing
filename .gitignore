@@ -14,6 +14,20 @@ plots/
 c_generated_code/
 /build
 
+# IDE
+.idea/
+.ruff_cache/
+
+# Reports and presentations
+*.pptx
+*.pdf
+report/
+flight_frames_level3/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
 # pixi environments
 .pixi/*
 !.pixi/config.toml

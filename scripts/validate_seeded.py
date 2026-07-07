@@ -7,9 +7,8 @@ crossing center-miss (the gate-clip margin against the ~0.20 m collision half-wi
 
 This is the harness the TRUE-100% bar is measured on: e.g. 0 fails over 300 seeded runs.
 
-    cd /Users/denizozturk/IdeaProjects/lsy_drone_racing && \
-        SCIPY_ARRAY_API=1 CONTROLLER=gate_search_v8 N_RUNS=300 SEED_OFFSET=1000 \
-        .pixi/envs/default/bin/python scripts/validate_seeded.py
+    SCIPY_ARRAY_API=1 CONTROLLER=gate_search_v8 N_RUNS=300 SEED_OFFSET=1000 \
+        python scripts/validate_seeded.py
 """
 # ruff: noqa: ANN001, ANN002, ANN003, ANN201, ANN202  (diagnostic script)
 

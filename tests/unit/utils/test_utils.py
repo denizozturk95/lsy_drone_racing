@@ -24,7 +24,6 @@ def test_load_controller():
 
 @pytest.mark.unit
 def test_gate_pass():
-    # TODO: Check accelerated function in RaceCore instead
     gate_pos = np.array([0, 0, 0])
     gate_quat = R.identity().as_quat()
     gate_size = np.array([1, 1])
